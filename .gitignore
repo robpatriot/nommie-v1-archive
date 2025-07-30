@@ -1,8 +1,56 @@
+# .gitignore
+
+### Node / Frontend
 node_modules/
-.env
+.next/
+out/
 dist/
-target/
-*.log
-.DS_Store
+.env
+.env.local
+.env.development
+.env.production
+pnpm-lock.yaml
+
+### Editor / IDE
 .vscode/
-.idea/ 
+.idea/
+*.code-workspace
+
+### OS
+.DS_Store
+Thumbs.db
+
+### Rust / Backend
+target/
+Cargo.lock
+**/*.rs.bk
+.env.backend
+*.log
+
+### Docker
+docker-compose.override.yml
+docker/volumes/
+**/.env.docker
+
+### Testing / Debug
+coverage/
+*.lcov
+*.tmp
+*.bak
+*.swp
+
+### Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+### Misc
+*.tgz
+*.zip
+*.gz
+*.tar
+*.patch
+*.sublime-workspace
+*.sublime-project
+
