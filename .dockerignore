@@ -1,0 +1,34 @@
+# Ignore all node_modules
+**/node_modules
+**/target
+**/dist
+**/.next
+**/.turbo
+**/coverage
+
+# Ignore local env files and secrets
+.env
+.env.*
+*.env
+**/*.env
+**/*.env.*
+
+# Ignore lock files if not used in builds
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Ignore editor and OS-specific files
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+
+# Ignore build artifacts
+*.tgz
+*.zip
+*.tar.gz
+*.patch
+*.bak
+*.swp
