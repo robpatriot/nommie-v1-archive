@@ -1,0 +1,24 @@
+{
+  "name": "nommie",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
+    "dev:full": "concurrently --kill-others --prefix-colors \"blue,green,yellow\" --prefix \"[{name}]\" --names \"postgres,backend,frontend\" \"docker compose up postgres\" \"pnpm exec wait-on tcp:localhost:5432 --timeout 20000 && cd apps/backend && cargo watch -x run\" \"pnpm exec wait-on tcp:localhost:5432 --timeout 20000 && cd apps/frontend && pnpm dev\"",
+    "dev:backend": "cd apps/backend && cargo watch -x run",
+    "dev:frontend": "cd apps/frontend && pnpm dev",
+    "build": "pnpm --recursive run build",
+    "test": "pnpm --recursive run test",
+    "db:start": "docker compose up -d postgres",
+    "db:stop": "docker compose down",
+    "db:restart": "docker compose restart postgres",
+    "db:logs": "docker compose logs -f postgres",
+    "db:reset": "docker compose down -v && docker compose up -d postgres"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "wait-on": "^7.2.0"
+  }
+}
