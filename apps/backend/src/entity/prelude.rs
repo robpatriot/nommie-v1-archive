@@ -1,1 +1,1 @@
-pub use sea_orm::entity::prelude::*; 
+// This file is intentionally empty to avoid unused import warnings 
