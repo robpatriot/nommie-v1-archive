@@ -11,6 +11,7 @@ pub struct Model {
     #[sea_orm(unique)]
     pub email: String,
     pub name: Option<String>,
+    pub is_ai: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

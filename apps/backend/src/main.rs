@@ -13,7 +13,7 @@ mod game_management;
 use migration::Migrator;
 use migration::MigratorTrait;
 use jwt::{JwtAuth, get_claims, get_user};
-use game_management::{create_game, get_games};
+use game_management::{create_game, get_games, mark_player_ready, add_ai_player, join_game, get_game_state};
 
 //extern crate sea_query;
 
@@ -115,6 +115,10 @@ async fn main() -> std::io::Result<()> {
                 .service(protected_route)
                 .service(create_game)
                 .service(get_games)
+                .service(mark_player_ready)
+                .service(add_ai_player)
+                .service(join_game)
+                .service(get_game_state)
                 )
     })
     .bind(("127.0.0.1", 8080))?

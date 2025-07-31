@@ -1,4 +1,6 @@
 use sea_orm_migration::prelude::*;
+use sea_orm::Statement;
+use uuid::Uuid;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -16,11 +18,60 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Users::ExternalId).string().not_null().unique_key())
                     .col(ColumnDef::new(Users::Email).string().not_null().unique_key())
                     .col(ColumnDef::new(Users::Name).string().null())
+                    .col(ColumnDef::new(Users::IsAi).boolean().not_null().default(false))
                     .col(ColumnDef::new(Users::CreatedAt).timestamp_with_time_zone().not_null())
                     .col(ColumnDef::new(Users::UpdatedAt).timestamp_with_time_zone().not_null())
                     .to_owned(),
             )
             .await?;
+
+        // Insert 3 AI users for development
+        let now = chrono::Utc::now();
+        let ai_users = vec![
+            (
+                "ai_user_1",
+                "__ai+1@nommie.dev",
+                "ChessMaster Bot",
+                now,
+                now,
+            ),
+            (
+                "ai_user_2", 
+                "__ai+2@nommie.dev",
+                "Strategy Sage",
+                now,
+                now,
+            ),
+            (
+                "ai_user_3",
+                "__ai+3@nommie.dev", 
+                "Tactical Turtle",
+                now,
+                now,
+            ),
+        ];
+
+        for (external_id, email, name, created_at, updated_at) in ai_users {
+            manager
+                .get_connection()
+                .execute(
+                    Statement::from_sql_and_values(
+                        manager.get_database_backend(),
+                        r#"INSERT INTO users (id, external_id, email, name, is_ai, created_at, updated_at) 
+                           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+                        vec![
+                            Uuid::new_v4().into(),
+                            external_id.into(),
+                            email.into(),
+                            name.into(),
+                            true.into(),
+                            created_at.into(),
+                            updated_at.into(),
+                        ],
+                    ),
+                )
+                .await?;
+        }
 
         // Create games table
         manager
@@ -30,8 +81,10 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(Games::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(Games::State).string_len(20).not_null())
+                    .col(ColumnDef::new(Games::CurrentTurn).integer().null())
                     .col(ColumnDef::new(Games::CreatedAt).timestamp_with_time_zone().not_null())
                     .col(ColumnDef::new(Games::UpdatedAt).timestamp_with_time_zone().not_null())
+                    .col(ColumnDef::new(Games::StartedAt).timestamp_with_time_zone().null())
                     .to_owned(),
             )
             .await?;
@@ -93,6 +146,7 @@ enum Users {
     ExternalId,
     Email,
     Name,
+    IsAi,
     CreatedAt,
     UpdatedAt,
 }
@@ -102,8 +156,10 @@ enum Games {
     Table,
     Id,
     State,
+    CurrentTurn,
     CreatedAt,
     UpdatedAt,
+    StartedAt,
 }
 
 #[derive(DeriveIden)]

@@ -11,7 +11,7 @@ interface Game {
   state: string;
   player_count: number;
   max_players?: number;
-  is_user_in_game?: boolean;
+  is_player_in_game?: boolean;
 }
 
 interface JoinGameResponse {
@@ -268,7 +268,7 @@ export default function LobbyPage() {
             <div className="space-y-4">
               {games.map((game) => {
                 const maxPlayers = game.max_players || 4;
-                const canJoin = !game.is_user_in_game && game.player_count < maxPlayers;
+                const canJoin = !game.is_player_in_game && game.player_count < maxPlayers;
                 
                 return (
                   <div
@@ -300,7 +300,7 @@ export default function LobbyPage() {
                       </div>
                       
                       <div className="flex items-center space-x-2">
-                        {game.is_user_in_game ? (
+                        {game.is_player_in_game ? (
                           <span className="px-3 py-1 text-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">
                             You're in this game
                           </span>
