@@ -16,14 +16,11 @@ async function signToken(userToken: Record<string, any>) {
     email: userToken.email
   }
   
-
-  
   const token = await new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt(now)
     .setExpirationTime(exp)
     .sign(secret)
-  
 
   return token
 }

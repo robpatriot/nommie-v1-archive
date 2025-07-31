@@ -1,4 +1,4 @@
 pub mod users;
-pub mod prelude;
-
-pub use users::*; 
+pub mod games;
+pub mod game_players;
+pub mod prelude; 

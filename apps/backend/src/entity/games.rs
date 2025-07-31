@@ -2,17 +2,24 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "users")]
+#[sea_orm(table_name = "games")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(unique)]
-    pub external_id: String,
-    #[sea_orm(unique)]
-    pub email: String,
-    pub name: Option<String>,
+    pub state: GameState,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+}
+
+#[derive(Clone, Debug, PartialEq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::N(20))")]
+pub enum GameState {
+    #[sea_orm(string_value = "waiting")]
+    Waiting,
+    #[sea_orm(string_value = "started")]
+    Started,
+    #[sea_orm(string_value = "completed")]
+    Completed,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -27,4 +34,4 @@ impl Related<super::game_players::Entity> for Entity {
     }
 }
 
-impl ActiveModelBehavior for ActiveModel {} 
+impl ActiveModelBehavior for ActiveModel {}

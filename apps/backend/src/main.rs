@@ -1,90 +1,55 @@
-use actix_web::{get, post, App, HttpServer, Responder, web, HttpResponse, Result as ActixResult, HttpRequest};
+use actix_web::{get, App, HttpServer, Responder, web, HttpResponse, Result as ActixResult, HttpRequest};
 use actix_cors::Cors;
 use dotenv::dotenv;
-use sea_orm::{Database, DatabaseConnection, EntityTrait, DbErr};
+use sea_orm::{Database, DatabaseConnection};
 use std::env;
 use serde_json::json;
 
 mod entity;
 mod jwt;
+mod user_management;
 
 use migration::Migrator;
 use migration::MigratorTrait;
-use entity::users::{Entity as Users, Model as User};
-use jwt::{JwtAuth, get_claims};
+use jwt::{JwtAuth, get_claims, get_user};
+
+//extern crate sea_query;
 
 #[get("/")]
 async fn hello() -> impl Responder {
     "Hello, Nommie!"
 }
 
-#[get("/users")]
-async fn get_users(db: web::Data<DatabaseConnection>) -> ActixResult<HttpResponse> {
-    // Fetch all users from the database
-    let users: Result<Vec<User>, DbErr> = Users::find()
-        .all(db.get_ref())
-        .await;
-    
-    match users {
-        Ok(users) => {
-            // Convert users to JSON and return success response
-            let users_json = json!({
-                "users": users,
-                "count": users.len()
-            });
-            
-            Ok(HttpResponse::Ok()
-                .content_type("application/json")
-                .json(users_json))
-        }
-        Err(e) => {
-            // Log the error and return an error response
-            eprintln!("Database error: {}", e);
-            Ok(HttpResponse::InternalServerError()
-                .content_type("application/json")
-                .json(json!({
-                    "error": "Failed to fetch users",
-                    "message": "Database query failed"
-                })))
-        }
-    }
-}
-
-#[post("/login")]
-async fn login() -> ActixResult<HttpResponse> {
-    // In a real application, you would validate credentials here
-    // For demo purposes, we'll create a token for a test user
-    match JwtAuth::create_token("test-user-123") {
-        Ok(token) => {
-            Ok(HttpResponse::Ok()
-                .content_type("application/json")
-                .json(json!({
-                    "token": token,
-                    "message": "Login successful"
-                })))
-        }
-        Err(_) => {
-            Ok(HttpResponse::InternalServerError()
-                .content_type("application/json")
-                .json(json!({
-                    "error": "Failed to create token"
-                })))
-        }
-    }
-}
-
 #[get("/protected")]
 async fn protected_route(req: HttpRequest) -> ActixResult<HttpResponse> {
-    // Extract claims from the request (set by JWT middleware)
+    // Extract claims and user from the request (set by JWT middleware)
     if let Some(claims) = get_claims(&req) {
-        Ok(HttpResponse::Ok()
-            .content_type("application/json")
-            .json(json!({
-                "message": "Access granted to protected route",
-                "user_id": claims.sub,
-                "issued_at": claims.iat,
-                "expires_at": claims.exp
-            })))
+        if let Some(user) = get_user(&req) {
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .json(json!({
+                    "message": "Access granted to protected route",
+                    "user": {
+                        "id": user.id,
+                        "external_id": user.external_id,
+                        "email": user.email,
+                        "name": user.name,
+                        "created_at": user.created_at
+                    },
+                    "token_info": {
+                        "sub": claims.sub,
+                        "email": claims.email,
+                        "issued_at": claims.iat,
+                        "expires_at": claims.exp
+                    }
+                })))
+        } else {
+            Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "User not found in request"
+                })))
+        }
     } else {
         // This should never happen if middleware is working correctly
         Ok(HttpResponse::Unauthorized()
@@ -93,28 +58,6 @@ async fn protected_route(req: HttpRequest) -> ActixResult<HttpResponse> {
                 "error": "No claims found"
             })))
     }
-}
-
-async fn query_users(db: &DatabaseConnection) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Querying users table...");
-    
-    // Fetch all users from the database
-    let users: Vec<User> = Users::find()
-        .all(db)
-        .await?;
-    
-    println!("Found {} users:", users.len());
-    
-    for user in users {
-        println!("  User ID: {}", user.id);
-        println!("  Email: {}", user.email);
-        println!("  Name: {}", user.name.as_deref().unwrap_or("Not set"));
-        println!("  Created: {}", user.created_at);
-        println!("  Updated: {}", user.updated_at);
-        println!("  ---");
-    }
-    
-    Ok(())
 }
 
 #[actix_web::main]
@@ -145,11 +88,6 @@ async fn main() -> std::io::Result<()> {
     
     println!("Database migrations completed successfully!");
     
-    // Query users table
-    if let Err(e) = query_users(&db).await {
-        eprintln!("Error querying users: {}", e);
-    }
-    
     // Start the HTTP server
     HttpServer::new(move || {
         // Configure CORS
@@ -170,10 +108,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(db.clone()))
             .service(hello)
-            .service(get_users)
-            .service(login)
             .service(web::scope("/api")
-                .wrap(JwtAuth::new())
+                .wrap(JwtAuth::new(db.clone()))
                 .service(protected_route)
                 )
     })
