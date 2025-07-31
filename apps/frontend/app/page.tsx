@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { ProtectedApiTest } from '@/components/auth/ProtectedApiTest';
+import { BACKEND_URL } from '@/lib/config';
 
 export default function Home() {
+  const { data: session, status } = useSession();
   const [data, setData] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -14,7 +17,7 @@ export default function Home() {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:8080/');
+      const response = await fetch(`${BACKEND_URL}/`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -45,21 +48,21 @@ export default function Home() {
             </p>
           </div>
           
-          {/* Placeholder for main UI components */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Lobby Navigation - Only show if authenticated */}
+          {status === 'authenticated' && (
             <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6 border border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-semibold mb-2">Feature 1</h3>
-              <p className="text-gray-600 dark:text-gray-400">Your first main feature component</p>
+              <h3 className="text-lg font-semibold mb-4">Game Lobby</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                Join existing games or create new ones in the lobby.
+              </p>
+              <a
+                href="/lobby"
+                className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                Go to Lobby
+              </a>
             </div>
-            <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6 border border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-semibold mb-2">Feature 2</h3>
-              <p className="text-gray-600 dark:text-gray-400">Your second main feature component</p>
-            </div>
-            <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6 border border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-semibold mb-2">Feature 3</h3>
-              <p className="text-gray-600 dark:text-gray-400">Your third main feature component</p>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

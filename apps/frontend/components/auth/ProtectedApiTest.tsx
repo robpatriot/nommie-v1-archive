@@ -2,6 +2,7 @@
 
 import { useSession, getSession } from "next-auth/react"
 import { useState } from "react"
+import { BACKEND_URL } from "@/lib/config"
 
 export function ProtectedApiTest() {
   const { data: session, status } = useSession()
@@ -18,7 +19,7 @@ export function ProtectedApiTest() {
       // Force session refresh to ensure we have a fresh JWT token
       const session = await getSession()
       
-      const res = await fetch("http://localhost:8080/api/protected", {
+      const res = await fetch(`${BACKEND_URL}/api/protected`, {
         headers: {
           Authorization: `Bearer ${session?.accessToken}`,
         },

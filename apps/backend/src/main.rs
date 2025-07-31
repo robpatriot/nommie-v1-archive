@@ -8,10 +8,12 @@ use serde_json::json;
 mod entity;
 mod jwt;
 mod user_management;
+mod game_management;
 
 use migration::Migrator;
 use migration::MigratorTrait;
 use jwt::{JwtAuth, get_claims, get_user};
+use game_management::{create_game, get_games};
 
 //extern crate sea_query;
 
@@ -111,6 +113,8 @@ async fn main() -> std::io::Result<()> {
             .service(web::scope("/api")
                 .wrap(JwtAuth::new(db.clone()))
                 .service(protected_route)
+                .service(create_game)
+                .service(get_games)
                 )
     })
     .bind(("127.0.0.1", 8080))?
