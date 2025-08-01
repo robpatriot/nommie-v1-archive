@@ -5,8 +5,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
-    "dev:full": "concurrently --kill-others --prefix-colors \"blue,green,yellow\" --prefix \"[{name}]\" --names \"postgres,backend,frontend\" \"docker compose up postgres\" \"pnpm exec wait-on tcp:localhost:5432 --timeout 20000 && cd apps/backend && cargo watch -x run\" \"pnpm exec wait-on tcp:localhost:5432 --timeout 20000 && cd apps/frontend && pnpm dev\"",
+    "dev": "concurrently --prefix-colors 'green,yellow' --prefix '[{name}]' --names 'backend,frontend' 'pnpm run dev:backend' 'pnpm run dev:frontend'",
+    "dev:stop": "pkill -f concurrently",
     "dev:backend": "cd apps/backend && cargo watch -x run",
     "dev:frontend": "cd apps/frontend && pnpm dev",
     "build": "pnpm --recursive run build",
