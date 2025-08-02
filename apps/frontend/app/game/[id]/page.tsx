@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { BACKEND_URL } from '@/lib/config';
+import { usePolling } from '@/hooks/usePolling';
 
 interface Player {
   id: string;
@@ -59,8 +60,6 @@ export default function GamePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
-  const [gameStatePollingInterval, setGameStatePollingInterval] = useState<NodeJS.Timeout | null>(null);
   const [markingReady, setMarkingReady] = useState(false);
   const [addingAI, setAddingAI] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -108,11 +107,6 @@ export default function GamePage() {
       };
       setGameData(gameData);
       setGameState(data);
-      
-      // Stop polling if game has started
-      if (data.game.state.toLowerCase() === 'started') {
-        setPollingInterval(null);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch game data');
     } finally {
@@ -121,93 +115,13 @@ export default function GamePage() {
     }
   }, [gameId]);
 
-  const fetchGameState = useCallback(async () => {
-    try {
-      const session = await import('next-auth/react').then(m => m.getSession());
-      
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
-      
-      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/state`, {
-        headers: {
-          'Authorization': `Bearer ${session.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-      
-      const data: GameState = await response.json();
-      setGameState(data);
-    } catch (err) {
-      console.error('Failed to fetch game state:', err);
-    }
-  }, [gameId]);
-
-  // Start polling when component mounts
-  useEffect(() => {
-    if (status === 'authenticated' && gameId) {
-      fetchGameData();
-      
-      // Start polling every 3 seconds
-      const interval = setInterval(() => {
-        fetchGameData();
-      }, 3000);
-      
-      setPollingInterval(interval);
-      
-      // Cleanup on unmount
-      return () => {
-        clearInterval(interval);
-      };
-    } else if (status === 'unauthenticated') {
-      setLoading(false);
-    }
-  }, [status, gameId, fetchGameData]);
-
-  // Start game state polling when game starts
-  useEffect(() => {
-    if (gameData?.game.state.toLowerCase() === 'started' && !gameStatePollingInterval) {
-      // Fetch initial game state
-      fetchGameState();
-      
-      // Start polling game state every 2.5 seconds
-      const interval = setInterval(() => {
-        fetchGameState();
-      }, 2500);
-      
-      setGameStatePollingInterval(interval);
-      
-      // Cleanup on unmount
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [gameData?.game.state, gameStatePollingInterval, fetchGameState]);
-
-  // Stop polling when game starts
-  useEffect(() => {
-    if (gameData?.game.state.toLowerCase() === 'started' && pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
-    }
-  }, [gameData?.game.state, pollingInterval]);
-
-  // Cleanup intervals on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-      }
-      if (gameStatePollingInterval) {
-        clearInterval(gameStatePollingInterval);
-      }
-    };
-  }, [pollingInterval, gameStatePollingInterval]);
+  // Use the polling hook
+  const { isPolling } = usePolling({
+    enabled: status === 'authenticated' && !!gameId,
+    interval: 2500, // 2.5 seconds
+    callback: fetchGameData,
+    immediate: true,
+  });
 
   const handleManualRefresh = () => {
     fetchGameData(true);
@@ -410,14 +324,9 @@ export default function GamePage() {
           {gameData && (
             <div className="text-sm text-gray-600 dark:text-gray-400">
               Players: {gameData.player_count}/{gameData.max_players}
-              {pollingInterval && (
+              {isPolling && (
                 <span className="ml-4 text-green-600 dark:text-green-400">
-                  • Auto-refreshing every 3 seconds
-                </span>
-              )}
-              {!pollingInterval && gameData.game.state === 'started' && (
-                <span className="ml-4 text-orange-600 dark:text-orange-400">
-                  • Game started - polling stopped
+                  • Auto-refreshing every 2.5 seconds
                 </span>
               )}
             </div>
@@ -632,11 +541,6 @@ export default function GamePage() {
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     Current Turn: {gameState.game.current_turn + 1}
                   </span>
-                  {gameStatePollingInterval && (
-                    <span className="text-xs text-green-600 dark:text-green-400">
-                      • Auto-updating every 2.5s
-                    </span>
-                  )}
                 </div>
               </div>
             )}

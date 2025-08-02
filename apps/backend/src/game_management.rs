@@ -1,12 +1,62 @@
 use actix_web::{get, post, web, HttpResponse, HttpRequest, Result as ActixResult};
-use sea_orm::{DatabaseConnection, ActiveModelTrait, Set, EntityTrait, QueryFilter, ColumnTrait};
+use sea_orm::{DatabaseConnection, ActiveModelTrait, Set, EntityTrait, QueryFilter, ColumnTrait, QueryOrder};
 use sea_orm_migration::prelude::Query;
 use serde_json::json;
 use chrono::{Utc, DateTime, FixedOffset};
 use uuid::Uuid;
 
-use crate::entity::{games, game_players, users};
+use crate::entity::{games, game_players, users, game_rounds, round_bids};
 use crate::jwt::get_user;
+use crate::dto::game_snapshot::{GameSnapshot, GameInfo, PlayerSnapshot, UserSnapshot, RoundSnapshot, RoundBidSnapshot};
+use crate::dto::bid_request::BidRequest;
+
+/// Helper function to check if all players are ready and start the game if so
+async fn check_and_start_game(
+    game_id: Uuid,
+    game: games::Model,
+    players: Vec<game_players::Model>,
+    db: &DatabaseConnection,
+) -> Result<bool, String> {
+    // Only proceed if exactly 4 players are in the game
+    if players.len() == 4 {
+        // Check if all players are ready
+        let all_ready = players.iter().all(|game_player| game_player.is_ready);
+        
+        if all_ready {
+            // Start the game
+            let now: DateTime<FixedOffset> = Utc::now().into();
+            let mut game_model: games::ActiveModel = game.into();
+            game_model.state = Set(games::GameState::Started);
+            game_model.started_at = Set(Some(now));
+            game_model.updated_at = Set(now);
+
+            match game_model.update(db).await {
+                Ok(_) => {
+                    // Create the first round
+                    let round_id = Uuid::new_v4();
+                    let first_round = game_rounds::ActiveModel {
+                        id: Set(round_id),
+                        game_id: Set(game_id),
+                        round_number: Set(1),
+                        dealer_player_id: Set(None), // Will be set later
+                        trump_suit: Set(None),
+                        created_at: Set(now),
+                    };
+
+                    match first_round.insert(db).await {
+                        Ok(_) => Ok(true),
+                        Err(_) => Err("Failed to create first round".to_string()),
+                    }
+                }
+                Err(_) => Err("Failed to start game".to_string()),
+            }
+        } else {
+            Ok(false)
+        }
+    } else {
+        Ok(false)
+    }
+}
 
 #[post("/create_game")]
 pub async fn create_game(
@@ -32,6 +82,7 @@ pub async fn create_game(
     let game = games::ActiveModel {
         id: Set(game_id),
         state: Set(games::GameState::Waiting),
+        phase: Set(games::GamePhase::Bidding),
         current_turn: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
@@ -298,58 +349,28 @@ pub async fn mark_player_ready(
         }
     };
 
-    // Only proceed if exactly 4 players are in the game
-    if all_game_players.len() == 4 {
-        // Check if all players are ready (AI players are automatically ready)
-        // We need to fetch user details to check if they are AI
-        let mut all_ready = true;
-        for game_player in &all_game_players {
-            let user = match users::Entity::find_by_id(game_player.user_id).one(&**db).await {
-                Ok(Some(user)) => user,
-                Ok(None) => {
-                    all_ready = false;
-                    break;
-                }
-                Err(_) => {
-                    all_ready = false;
-                    break;
-                }
-            };
-            
-            if !game_player.is_ready && !user.is_ai {
-                all_ready = false;
-                break;
-            }
+    // Check if all players are ready and start the game if so
+    match check_and_start_game(game_id, game, all_game_players, &**db).await {
+        Ok(true) => {
+            return Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .json(json!({
+                    "success": true,
+                    "message": "Player marked as ready and game started",
+                    "game_player": updated_game_player,
+                    "game_started": true
+                })));
         }
-        
-        if all_ready {
-            // Start the game
-            let now: DateTime<FixedOffset> = Utc::now().into();
-            let mut game_model: games::ActiveModel = game.into();
-            game_model.state = Set(games::GameState::Started);
-            game_model.started_at = Set(Some(now));
-            game_model.updated_at = Set(now);
-
-            match game_model.update(&**db).await {
-                Ok(_) => {
-                    return Ok(HttpResponse::Ok()
-                        .content_type("application/json")
-                        .json(json!({
-                            "success": true,
-                            "message": "Player marked as ready and game started",
-                            "game_player": updated_game_player,
-                            "game_started": true
-                        })));
-                }
-                Err(e) => {
-                    return Ok(HttpResponse::InternalServerError()
-                        .content_type("application/json")
-                        .json(json!({
-                            "error": "Failed to start game",
-                            "details": e.to_string()
-                        })));
-                }
-            }
+        Ok(false) => {
+            // Game not started, continue to normal response
+        }
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to start game",
+                    "details": e
+                })));
         }
     }
 
@@ -507,8 +528,6 @@ pub async fn add_ai_player(
         }
     };
 
-
-
     // Create AI game player
     let ai_game_player_id = Uuid::new_v4();
     let ai_game_player = game_players::ActiveModel {
@@ -549,46 +568,9 @@ pub async fn add_ai_player(
         }
     };
 
-    let game_started = if updated_players.len() == 4 {
-        // Check if all players are ready (AI players are automatically ready)
-        // We need to fetch user details to check if they are AI
-        let mut all_ready = true;
-        for game_player in &updated_players {
-            let user = match users::Entity::find_by_id(game_player.user_id).one(&**db).await {
-                Ok(Some(user)) => user,
-                Ok(None) => {
-                    all_ready = false;
-                    break;
-                }
-                Err(_) => {
-                    all_ready = false;
-                    break;
-                }
-            };
-            
-            if !game_player.is_ready && !user.is_ai {
-                all_ready = false;
-                break;
-            }
-        }
-        
-        if all_ready {
-            // Start the game
-            let now: DateTime<FixedOffset> = Utc::now().into();
-            let mut game_model: games::ActiveModel = game.into();
-            game_model.state = Set(games::GameState::Started);
-            game_model.started_at = Set(Some(now));
-            game_model.updated_at = Set(now);
-
-            match game_model.update(&**db).await {
-                Ok(_) => true,
-                Err(_) => false,
-            }
-        } else {
-            false
-        }
-    } else {
-        false
+    let game_started = match check_and_start_game(game_id, game, updated_players, &**db).await {
+        Ok(started) => started,
+        Err(_) => false, // Silently fail for AI player addition
     };
 
     Ok(HttpResponse::Ok()
@@ -852,7 +834,7 @@ pub async fn get_game_state(
         }
     };
 
-    // Fetch user details for all players
+    // Fetch user details for all players and build PlayerSnapshot instances
     let mut players_with_details = Vec::new();
     for game_player in &game_players {
         let user = match users::Entity::find_by_id(game_player.user_id).one(&**db).await {
@@ -861,40 +843,363 @@ pub async fn get_game_state(
             Err(_) => continue, // Skip on error
         };
 
-        players_with_details.push(json!({
-            "id": game_player.id,
-            "user_id": game_player.user_id,
-            "turn_order": game_player.turn_order,
-            "is_ready": game_player.is_ready,
-            "is_ai": user.is_ai,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name
-            }
-        }));
+        let user_snapshot = UserSnapshot {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+        };
+
+        let player_snapshot = PlayerSnapshot {
+            id: game_player.id,
+            user_id: game_player.user_id,
+            turn_order: game_player.turn_order,
+            is_ready: game_player.is_ready,
+            is_ai: user.is_ai,
+            user: user_snapshot,
+        };
+
+        players_with_details.push(player_snapshot);
     }
 
     // Sort players by turn order
     players_with_details.sort_by(|a, b| {
-        let a_order = a["turn_order"].as_i64().unwrap_or(-1);
-        let b_order = b["turn_order"].as_i64().unwrap_or(-1);
+        let a_order = a.turn_order.unwrap_or(-1);
+        let b_order = b.turn_order.unwrap_or(-1);
         a_order.cmp(&b_order)
     });
+
+    // Build GameInfo
+    let game_info = GameInfo {
+        id: game.id,
+        state: game.state.to_string(),
+        phase: game.phase.to_string(),
+        current_turn: game.current_turn,
+        created_at: game.created_at,
+        updated_at: game.updated_at,
+        started_at: game.started_at,
+    };
+
+    // Fetch current round information
+    let current_round = match game_rounds::Entity::find()
+        .filter(game_rounds::Column::GameId.eq(game_id))
+        .order_by_desc(game_rounds::Column::RoundNumber)
+        .one(&**db)
+        .await
+    {
+        Ok(Some(round)) => {
+            // Fetch bids for this round
+            let round_bids = match round_bids::Entity::find()
+                .filter(round_bids::Column::RoundId.eq(round.id))
+                .all(&**db)
+                .await
+            {
+                Ok(bids) => bids,
+                Err(_) => Vec::new(),
+            };
+
+            let bid_snapshots: Vec<RoundBidSnapshot> = round_bids
+                .iter()
+                .map(|bid| RoundBidSnapshot {
+                    player_id: bid.player_id,
+                    bid: bid.bid,
+                })
+                .collect();
+
+            Some(RoundSnapshot {
+                id: round.id,
+                round_number: round.round_number,
+                phase: game.phase.to_string(),
+                dealer_player_id: round.dealer_player_id,
+                trump_suit: round.trump_suit,
+                bids: bid_snapshots,
+                current_bidder_turn: game.current_turn,
+            })
+        }
+        Ok(None) => None,
+        Err(_) => None,
+    };
+
+    // Build GameSnapshot
+    let game_snapshot = GameSnapshot {
+        game: game_info,
+        players: players_with_details,
+        current_round,
+        player_count: game_players.len(),
+        max_players: 4,
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/json")
+        .json(game_snapshot))
+}
+
+#[post("/game/{id}/bid")]
+pub async fn submit_bid(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bid_data: web::Json<BidRequest>,
+    db: web::Data<DatabaseConnection>,
+) -> ActixResult<HttpResponse> {
+    // Extract user from JWT authentication
+    let user = match get_user(&req) {
+        Some(user) => user,
+        None => {
+            return Ok(HttpResponse::Unauthorized()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "User not authenticated"
+                })));
+        }
+    };
+
+    // Parse game ID from path
+    let game_id = match path.parse::<Uuid>() {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Invalid game ID format"
+                })));
+        }
+    };
+
+    // Validate bid value (0-13)
+    let bid_value = bid_data.bid;
+    if bid_value < 0 || bid_value > 13 {
+        return Ok(HttpResponse::BadRequest()
+            .content_type("application/json")
+            .json(json!({
+                "error": "Bid must be between 0 and 13"
+            })));
+    }
+
+    // Fetch the game
+    let game = match games::Entity::find_by_id(game_id).one(&**db).await {
+        Ok(Some(game)) => game,
+        Ok(None) => {
+            return Ok(HttpResponse::NotFound()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Game not found"
+                })));
+        }
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to fetch game",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    // Fetch the current player's game_player record
+    let current_player = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .filter(game_players::Column::UserId.eq(user.id))
+        .one(&**db)
+        .await
+    {
+        Ok(Some(player)) => player,
+        Ok(None) => {
+            return Ok(HttpResponse::Forbidden()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "You are not a participant in this game"
+                })));
+        }
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to fetch player data",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    // Validate that the game is in the Bidding phase
+    if game.phase != games::GamePhase::Bidding {
+        return Ok(HttpResponse::BadRequest()
+            .content_type("application/json")
+            .json(json!({
+                "error": "Game is not in bidding phase"
+            })));
+    }
+
+    // Find the current round for this game (latest round)
+    let current_round = match game_rounds::Entity::find()
+        .filter(game_rounds::Column::GameId.eq(game_id))
+        .order_by_desc(game_rounds::Column::RoundNumber)
+        .one(&**db)
+        .await
+    {
+        Ok(Some(round)) => round,
+        Ok(None) => {
+            return Ok(HttpResponse::BadRequest()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "No current round found"
+                })));
+        }
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to fetch current round",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    // Check if this player has already bid in this round
+    let existing_bid = match round_bids::Entity::find()
+        .filter(round_bids::Column::RoundId.eq(current_round.id))
+        .filter(round_bids::Column::PlayerId.eq(current_player.id))
+        .one(&**db)
+        .await
+    {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to check existing bid",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    if existing_bid {
+        return Ok(HttpResponse::BadRequest()
+            .content_type("application/json")
+            .json(json!({
+                "error": "You have already submitted a bid for this round"
+            })));
+    }
+
+    // Check if it's this player's turn to bid
+    let current_turn = game.current_turn.unwrap_or(0);
+    if current_player.turn_order.unwrap_or(-1) != current_turn {
+        return Ok(HttpResponse::BadRequest()
+            .content_type("application/json")
+            .json(json!({
+                "error": "It's not your turn to bid"
+            })));
+    }
+
+    // Save the bid to the round_bids table
+    let bid_id = Uuid::new_v4();
+    let round_bid = round_bids::ActiveModel {
+        id: Set(bid_id),
+        round_id: Set(current_round.id),
+        player_id: Set(current_player.id),
+        bid: Set(bid_value),
+    };
+
+    match round_bid.insert(&**db).await {
+        Ok(_) => (),
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to save bid",
+                    "details": e.to_string()
+                })));
+        }
+    }
+
+    // Check if all players have bid in this round
+    let all_players = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .all(&**db)
+        .await
+    {
+        Ok(players) => players,
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to fetch all players",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    let round_bids = match round_bids::Entity::find()
+        .filter(round_bids::Column::RoundId.eq(current_round.id))
+        .all(&**db)
+        .await
+    {
+        Ok(bids) => bids,
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to fetch round bids",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    let all_bids_submitted = round_bids.len() == all_players.len();
+
+    if all_bids_submitted {
+        // Transition the game to TrumpSelection phase
+        let game_update = games::ActiveModel {
+            id: Set(game.id),
+            state: Set(game.state),
+            phase: Set(games::GamePhase::TrumpSelection),
+            current_turn: Set(Some(0)), // Reset turn for trump selection
+            created_at: Set(game.created_at),
+            updated_at: Set(chrono::Utc::now().into()),
+            started_at: Set(game.started_at),
+        };
+
+        match game_update.update(&**db).await {
+            Ok(_) => (),
+            Err(e) => {
+                return Ok(HttpResponse::InternalServerError()
+                    .content_type("application/json")
+                    .json(json!({
+                        "error": "Failed to transition game phase",
+                        "details": e.to_string()
+                    })));
+            }
+        }
+    } else {
+        // Move to next player's turn
+        let next_turn = (current_turn + 1) % 4;
+        let game_update = games::ActiveModel {
+            id: Set(game.id),
+            state: Set(game.state),
+            phase: Set(game.phase),
+            current_turn: Set(Some(next_turn)),
+            created_at: Set(game.created_at),
+            updated_at: Set(chrono::Utc::now().into()),
+            started_at: Set(game.started_at),
+        };
+
+        match game_update.update(&**db).await {
+            Ok(_) => (),
+            Err(e) => {
+                return Ok(HttpResponse::InternalServerError()
+                    .content_type("application/json")
+                    .json(json!({
+                        "error": "Failed to update turn",
+                        "details": e.to_string()
+                    })));
+            }
+        }
+    }
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
         .json(json!({
-            "game": {
-                "id": game.id,
-                "state": game.state,
-                "current_turn": game.current_turn,
-                "created_at": game.created_at,
-                "updated_at": game.updated_at,
-                "started_at": game.started_at
-            },
-            "players": players_with_details,
-            "player_count": game_players.len(),
-            "max_players": 4
+            "message": "Bid submitted successfully",
+            "bid": bid_value,
+            "all_bids_submitted": all_bids_submitted
         })))
 } 

@@ -15,7 +15,7 @@
     "db:stop": "docker compose down",
     "db:restart": "docker compose restart postgres",
     "db:logs": "docker compose logs -f postgres",
-    "db:reset": "docker compose down -v && docker compose up -d postgres"
+    "db:reset": "docker compose down -v && docker compose up -d --build postgres"
   },
   "devDependencies": {
     "concurrently": "^9.2.0",

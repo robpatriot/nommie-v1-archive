@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { CreateGameButton } from '@/components/game/CreateGameButton';
 import { BACKEND_URL } from '@/lib/config';
+import { usePolling } from '@/hooks/usePolling';
 
 interface Game {
   id: string;
@@ -29,16 +30,7 @@ export default function LobbyPage() {
   const [joiningGame, setJoiningGame] = useState<string | null>(null);
   const [createGameLoading, setCreateGameLoading] = useState(false);
 
-  // Fetch games on mount
-  useEffect(() => {
-    if (status === 'authenticated') {
-      fetchGames();
-    } else if (status === 'unauthenticated') {
-      setLoading(false);
-    }
-  }, [status]);
-
-  const fetchGames = async () => {
+  const fetchGames = useCallback(async () => {
     setLoading(true);
     setError(null);
     
@@ -68,7 +60,15 @@ export default function LobbyPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Use the polling hook
+  const { isPolling } = usePolling({
+    enabled: status === 'authenticated',
+    interval: 5000, // 5 seconds
+    callback: fetchGames,
+    immediate: true,
+  });
 
   const joinGame = async (gameId: string) => {
     setJoiningGame(gameId);
@@ -226,13 +226,21 @@ export default function LobbyPage() {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
               Available Games
             </h2>
-            <button
-              onClick={fetchGames}
-              disabled={loading}
-              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
-            >
-              {loading ? 'Refreshing...' : 'Refresh'}
-            </button>
+            <div className="flex items-center space-x-3">
+              {isPolling && (
+                <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-2"></div>
+                  Auto-refreshing every 5 seconds
+                </div>
+              )}
+              <button
+                onClick={fetchGames}
+                disabled={loading}
+                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
+              >
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
           {error && (

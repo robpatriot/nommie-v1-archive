@@ -81,6 +81,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(Games::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(Games::State).string_len(20).not_null())
+                    .col(ColumnDef::new(Games::Phase).string_len(20).not_null().default("bidding"))
                     .col(ColumnDef::new(Games::CurrentTurn).integer().null())
                     .col(ColumnDef::new(Games::CreatedAt).timestamp_with_time_zone().not_null())
                     .col(ColumnDef::new(Games::UpdatedAt).timestamp_with_time_zone().not_null())
@@ -118,11 +119,77 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Create game_rounds table
+        manager
+            .create_table(
+                Table::create()
+                    .table(GameRounds::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(GameRounds::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(GameRounds::GameId).uuid().not_null())
+                    .col(ColumnDef::new(GameRounds::RoundNumber).integer().not_null())
+                    .col(ColumnDef::new(GameRounds::DealerPlayerId).uuid().null())
+                    .col(ColumnDef::new(GameRounds::TrumpSuit).string_len(10).null())
+                    .col(ColumnDef::new(GameRounds::CreatedAt).timestamp_with_time_zone().not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_game_rounds_game_id")
+                            .from(GameRounds::Table, GameRounds::GameId)
+                            .to(Games::Table, Games::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_game_rounds_dealer_player_id")
+                            .from(GameRounds::Table, GameRounds::DealerPlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::SetNull)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create round_bids table
+        manager
+            .create_table(
+                Table::create()
+                    .table(RoundBids::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(RoundBids::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(RoundBids::RoundId).uuid().not_null())
+                    .col(ColumnDef::new(RoundBids::PlayerId).uuid().not_null())
+                    .col(ColumnDef::new(RoundBids::Bid).integer().not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_bids_round_id")
+                            .from(RoundBids::Table, RoundBids::RoundId)
+                            .to(GameRounds::Table, GameRounds::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_bids_player_id")
+                            .from(RoundBids::Table, RoundBids::PlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Drop tables in reverse order due to foreign key constraints
+        manager
+            .drop_table(Table::drop().table(RoundBids::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(GameRounds::Table).to_owned())
+            .await?;
+
         manager
             .drop_table(Table::drop().table(GamePlayers::Table).to_owned())
             .await?;
@@ -156,6 +223,7 @@ enum Games {
     Table,
     Id,
     State,
+    Phase,
     CurrentTurn,
     CreatedAt,
     UpdatedAt,
@@ -170,4 +238,24 @@ enum GamePlayers {
     UserId,
     TurnOrder,
     IsReady,
+}
+
+#[derive(DeriveIden)]
+enum GameRounds {
+    Table,
+    Id,
+    GameId,
+    RoundNumber,
+    DealerPlayerId,
+    TrumpSuit,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum RoundBids {
+    Table,
+    Id,
+    RoundId,
+    PlayerId,
+    Bid,
 } 
