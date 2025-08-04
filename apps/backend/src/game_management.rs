@@ -5,7 +5,7 @@ use serde_json::json;
 use chrono::{Utc, DateTime, FixedOffset};
 use uuid::Uuid;
 
-use crate::entity::{games, game_players, users, game_rounds, round_bids, round_tricks, round_scores, trick_plays};
+use crate::entity::{games, game_players, users, game_rounds, round_bids, round_tricks, round_scores, trick_plays, round_hands};
 use crate::jwt::get_user;
 use crate::dto::game_snapshot::{GameSnapshot, GameInfo, PlayerSnapshot, UserSnapshot, RoundSnapshot, RoundBidSnapshot, TrickSnapshot, TrickPlaySnapshot, RoundScoreSnapshot};
 use crate::dto::game_summary::{GameSummary, GameSummaryInfo, PlayerSummary, UserSummary, RoundSummary, PlayerRoundResult, FinalRoundSummary, RoundBidSummary, RoundScoreSummary};
@@ -57,7 +57,13 @@ async fn check_and_start_game(
                     };
 
                     match first_round.insert(db).await {
-                        Ok(_) => Ok(true),
+                        Ok(_) => {
+                            // Deal cards to players for the first round
+                            match deal_cards_to_players(&round_id, 13, db).await {
+                                Ok(_) => Ok(true),
+                                Err(e) => Err(format!("Failed to deal cards: {}", e)),
+                            }
+                        },
                         Err(_) => Err("Failed to create first round".to_string()),
                     }
                 }
@@ -826,6 +832,29 @@ pub async fn get_game_state(
             Err(_) => 0, // Default to 0 on error
         };
 
+        // Fetch player's hand for the current round (only if there is a current round)
+        let mut player_hand = None;
+        if let Ok(Some(current_round)) = game_rounds::Entity::find()
+            .filter(game_rounds::Column::GameId.eq(game_id))
+            .order_by_desc(game_rounds::Column::RoundNumber)
+            .one(&**db)
+            .await
+        {
+            // Only show hand to the authenticated player
+            if game_player.user_id == user.id {
+                let hand_cards = match round_hands::Entity::find()
+                    .filter(round_hands::Column::RoundId.eq(current_round.id))
+                    .filter(round_hands::Column::PlayerId.eq(game_player.id))
+                    .all(&**db)
+                    .await
+                {
+                    Ok(cards) => cards.into_iter().map(|card| card.card).collect(),
+                    Err(_) => Vec::new(),
+                };
+                player_hand = Some(hand_cards);
+            }
+        }
+
         let player_snapshot = PlayerSnapshot {
             id: game_player.id,
             user_id: game_player.user_id,
@@ -833,6 +862,7 @@ pub async fn get_game_state(
             is_ready: game_player.is_ready,
             is_ai: user.is_ai,
             total_score,
+            hand: player_hand,
             user: user_snapshot,
         };
 
@@ -2090,6 +2120,85 @@ fn calculate_cards_dealt(round_number: i32) -> i32 {
     }
 }
 
+/// Create a standard 52-card deck and shuffle it
+fn create_shuffled_deck() -> Vec<String> {
+    let suits = vec!["H", "D", "C", "S"]; // Hearts, Diamonds, Clubs, Spades
+    let ranks = vec!["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+    
+    let mut deck = Vec::new();
+    for suit in &suits {
+        for rank in &ranks {
+            deck.push(format!("{}{}", rank, suit));
+        }
+    }
+    
+    // Shuffle the deck
+    use rand::seq::SliceRandom;
+    let mut rng = rand::thread_rng();
+    deck.shuffle(&mut rng);
+    
+    deck
+}
+
+/// Deal cards to players for a round
+async fn deal_cards_to_players(
+    round_id: &Uuid,
+    cards_dealt: i32,
+    db: &DatabaseConnection,
+) -> Result<(), String> {
+    // Get all players in the game
+    let round = match game_rounds::Entity::find_by_id(*round_id).one(db).await {
+        Ok(Some(round)) => round,
+        Ok(None) => return Err("Round not found".to_string()),
+        Err(_) => return Err("Failed to fetch round".to_string()),
+    };
+
+    let players = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(round.game_id))
+        .all(db)
+        .await
+    {
+        Ok(players) => players,
+        Err(_) => return Err("Failed to fetch game players".to_string()),
+    };
+
+    // Create and shuffle the deck
+    let deck = create_shuffled_deck();
+    
+    // Calculate total cards needed
+    let total_cards_needed = cards_dealt * players.len() as i32;
+    if total_cards_needed > 52 {
+        return Err("Not enough cards in deck".to_string());
+    }
+    
+    // Deal cards to each player
+    for (player_index, player) in players.iter().enumerate() {
+        for card_index in 0..cards_dealt {
+            let card_index_in_deck = (player_index * cards_dealt as usize) + card_index as usize;
+            if card_index_in_deck >= deck.len() {
+                return Err("Not enough cards in deck".to_string());
+            }
+            
+            let card = deck[card_index_in_deck].clone();
+            
+            // Store the card in round_hands table
+            let round_hand = round_hands::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                round_id: Set(*round_id),
+                player_id: Set(player.id),
+                card: Set(card),
+            };
+
+            match round_hand.insert(db).await {
+                Ok(_) => (),
+                Err(_) => return Err("Failed to store card in round_hands".to_string()),
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Calculate scores for a round and update player totals
 async fn calculate_round_scores(
     round_id: &Uuid,
@@ -2223,8 +2332,9 @@ async fn create_next_round(
     };
 
     // Create the next round
+    let next_round_id = Uuid::new_v4();
     let next_round = game_rounds::ActiveModel {
-        id: Set(Uuid::new_v4()),
+        id: Set(next_round_id),
         game_id: Set(*game_id),
         round_number: Set(next_round_number),
         dealer_player_id: Set(next_dealer),
@@ -2234,7 +2344,13 @@ async fn create_next_round(
     };
 
     match next_round.insert(db).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Deal cards to players for the new round
+            match deal_cards_to_players(&next_round_id, cards_dealt, db).await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(format!("Failed to deal cards: {}", e)),
+            }
+        },
         Err(_) => Err("Failed to create next round".to_string()),
     }
 } 

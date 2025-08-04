@@ -5,4 +5,5 @@ pub mod game_rounds;
 pub mod round_bids;
 pub mod round_tricks;
 pub mod round_scores;
-pub mod trick_plays; 
+pub mod trick_plays;
+pub mod round_hands; 

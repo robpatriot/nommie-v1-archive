@@ -31,6 +31,7 @@ pub struct PlayerSnapshot {
     pub is_ready: bool,
     pub is_ai: bool,
     pub total_score: i32,
+    pub hand: Option<Vec<String>>, // Cards in player's hand (only shown to the player themselves)
     pub user: UserSnapshot,
 }
 

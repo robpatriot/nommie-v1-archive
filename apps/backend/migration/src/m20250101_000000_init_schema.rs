@@ -265,11 +265,40 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Create round_hands table
+        manager
+            .create_table(
+                Table::create()
+                    .table(RoundHands::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(RoundHands::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(RoundHands::RoundId).uuid().not_null())
+                    .col(ColumnDef::new(RoundHands::PlayerId).uuid().not_null())
+                    .col(ColumnDef::new(RoundHands::Card).string_len(10).not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_hands_round_id")
+                            .from(RoundHands::Table, RoundHands::RoundId)
+                            .to(GameRounds::Table, GameRounds::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_hands_player_id")
+                            .from(RoundHands::Table, RoundHands::PlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Drop tables in reverse order
+        manager.drop_table(Table::drop().table(RoundHands::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(TrickPlays::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(RoundScores::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(RoundTricks::Table).to_owned()).await?;
@@ -365,4 +394,13 @@ enum TrickPlays {
     PlayerId,
     Card,
     PlayOrder,
+}
+
+#[derive(DeriveIden)]
+enum RoundHands {
+    Table,
+    Id,
+    RoundId,
+    PlayerId,
+    Card,
 } 
