@@ -10,6 +10,7 @@ pub struct Model {
     pub round_number: i32,
     pub dealer_player_id: Option<Uuid>,
     pub trump_suit: Option<String>,
+    pub cards_dealt: i32,
     pub created_at: DateTimeWithTimeZone,
 }
 

@@ -60,13 +60,13 @@ impl MigrationTrait for Migration {
                         r#"INSERT INTO users (id, external_id, email, name, is_ai, created_at, updated_at) 
                            VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
                         vec![
-                            Uuid::new_v4().into(),
+                            Uuid::new_v4().to_string().into(),
                             external_id.into(),
                             email.into(),
                             name.into(),
                             true.into(),
-                            created_at.into(),
-                            updated_at.into(),
+                            created_at.to_rfc3339().into(),
+                            updated_at.to_rfc3339().into(),
                         ],
                     ),
                 )
@@ -86,6 +86,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Games::CreatedAt).timestamp_with_time_zone().not_null())
                     .col(ColumnDef::new(Games::UpdatedAt).timestamp_with_time_zone().not_null())
                     .col(ColumnDef::new(Games::StartedAt).timestamp_with_time_zone().null())
+                    .col(ColumnDef::new(Games::CompletedAt).timestamp_with_time_zone().null())
                     .to_owned(),
             )
             .await?;
@@ -130,6 +131,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(GameRounds::RoundNumber).integer().not_null())
                     .col(ColumnDef::new(GameRounds::DealerPlayerId).uuid().null())
                     .col(ColumnDef::new(GameRounds::TrumpSuit).string_len(10).null())
+                    .col(ColumnDef::new(GameRounds::CardsDealt).integer().not_null().default(13))
                     .col(ColumnDef::new(GameRounds::CreatedAt).timestamp_with_time_zone().not_null())
                     .foreign_key(
                         ForeignKey::create()
@@ -177,31 +179,105 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Create round_tricks table
+        manager
+            .create_table(
+                Table::create()
+                    .table(RoundTricks::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(RoundTricks::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(RoundTricks::RoundId).uuid().not_null())
+                    .col(ColumnDef::new(RoundTricks::TrickNumber).integer().not_null())
+                    .col(ColumnDef::new(RoundTricks::WinnerPlayerId).uuid().null())
+                    .col(ColumnDef::new(RoundTricks::CreatedAt).timestamp_with_time_zone().not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_tricks_round_id")
+                            .from(RoundTricks::Table, RoundTricks::RoundId)
+                            .to(GameRounds::Table, GameRounds::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_tricks_winner_player_id")
+                            .from(RoundTricks::Table, RoundTricks::WinnerPlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::SetNull)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create round_scores table
+        manager
+            .create_table(
+                Table::create()
+                    .table(RoundScores::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(RoundScores::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(RoundScores::RoundId).uuid().not_null())
+                    .col(ColumnDef::new(RoundScores::PlayerId).uuid().not_null())
+                    .col(ColumnDef::new(RoundScores::TricksWon).integer().not_null().default(0))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_scores_round_id")
+                            .from(RoundScores::Table, RoundScores::RoundId)
+                            .to(GameRounds::Table, GameRounds::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_round_scores_player_id")
+                            .from(RoundScores::Table, RoundScores::PlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create trick_plays table
+        manager
+            .create_table(
+                Table::create()
+                    .table(TrickPlays::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(TrickPlays::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(TrickPlays::TrickId).uuid().not_null())
+                    .col(ColumnDef::new(TrickPlays::PlayerId).uuid().not_null())
+                    .col(ColumnDef::new(TrickPlays::Card).string_len(10).not_null())
+                    .col(ColumnDef::new(TrickPlays::PlayOrder).integer().not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_trick_plays_trick_id")
+                            .from(TrickPlays::Table, TrickPlays::TrickId)
+                            .to(RoundTricks::Table, RoundTricks::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_trick_plays_player_id")
+                            .from(TrickPlays::Table, TrickPlays::PlayerId)
+                            .to(GamePlayers::Table, GamePlayers::Id)
+                            .on_delete(ForeignKeyAction::Cascade)
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Drop tables in reverse order due to foreign key constraints
-        manager
-            .drop_table(Table::drop().table(RoundBids::Table).to_owned())
-            .await?;
-
-        manager
-            .drop_table(Table::drop().table(GameRounds::Table).to_owned())
-            .await?;
-
-        manager
-            .drop_table(Table::drop().table(GamePlayers::Table).to_owned())
-            .await?;
-
-        manager
-            .drop_table(Table::drop().table(Games::Table).to_owned())
-            .await?;
-
-        manager
-            .drop_table(Table::drop().table(Users::Table).to_owned())
-            .await?;
-
+        // Drop tables in reverse order
+        manager.drop_table(Table::drop().table(TrickPlays::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(RoundScores::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(RoundTricks::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(RoundBids::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(GameRounds::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(GamePlayers::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(Games::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(Users::Table).to_owned()).await?;
         Ok(())
     }
 }
@@ -228,6 +304,7 @@ enum Games {
     CreatedAt,
     UpdatedAt,
     StartedAt,
+    CompletedAt,
 }
 
 #[derive(DeriveIden)]
@@ -248,6 +325,7 @@ enum GameRounds {
     RoundNumber,
     DealerPlayerId,
     TrumpSuit,
+    CardsDealt,
     CreatedAt,
 }
 
@@ -258,4 +336,33 @@ enum RoundBids {
     RoundId,
     PlayerId,
     Bid,
+}
+
+#[derive(DeriveIden)]
+enum RoundTricks {
+    Table,
+    Id,
+    RoundId,
+    TrickNumber,
+    WinnerPlayerId,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum RoundScores {
+    Table,
+    Id,
+    RoundId,
+    PlayerId,
+    TricksWon,
+}
+
+#[derive(DeriveIden)]
+enum TrickPlays {
+    Table,
+    Id,
+    TrickId,
+    PlayerId,
+    Card,
+    PlayOrder,
 } 
