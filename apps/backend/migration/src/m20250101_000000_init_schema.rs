@@ -60,13 +60,13 @@ impl MigrationTrait for Migration {
                         r#"INSERT INTO users (id, external_id, email, name, is_ai, created_at, updated_at) 
                            VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
                         vec![
-                            Uuid::new_v4().to_string().into(),
+                            Uuid::new_v4().into(),
                             external_id.into(),
                             email.into(),
                             name.into(),
                             true.into(),
-                            created_at.to_rfc3339().into(),
-                            updated_at.to_rfc3339().into(),
+                            created_at.into(),
+                            updated_at.into(),
                         ],
                     ),
                 )
