@@ -2108,15 +2108,15 @@ fn is_trump_suit(suit: &str, trump_suit: &Option<String>) -> bool {
 
 /// Calculate the number of cards to deal for a given round number
 fn calculate_cards_dealt(round_number: i32) -> i32 {
-    if round_number <= 13 {
-        // Rounds 1-13: 13 cards down to 1 card
+    if round_number <= 11 {
+        // Rounds 1-11: 13 cards down to 3 cards
         14 - round_number
-    } else if round_number <= 17 {
-        // Rounds 14-17: 4 rounds of 2 cards
+    } else if round_number <= 15 {
+        // Rounds 12-15: 4 rounds of 2 cards
         2
     } else {
-        // Rounds 18-26: 3 cards up to 13 cards
-        round_number - 15
+        // Rounds 16-26: 3 cards up to 13 cards
+        round_number - 12
     }
 }
 
