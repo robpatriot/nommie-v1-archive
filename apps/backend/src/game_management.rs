@@ -4,6 +4,7 @@ use sea_orm_migration::prelude::Query;
 use serde_json::json;
 use chrono::{Utc, DateTime, FixedOffset};
 use uuid::Uuid;
+use rand;
 
 use crate::entity::{games, game_players, users, game_rounds, round_bids, round_tricks, round_scores, trick_plays, round_hands};
 use crate::jwt::get_user;
@@ -39,6 +40,8 @@ async fn check_and_start_game(
             let game_id = game.id; // Extract game_id before moving game
             let mut game_model: games::ActiveModel = game.into();
             game_model.state = Set(games::GameState::Started);
+            game_model.phase = Set(games::GamePhase::Bidding);
+            game_model.current_turn = Set(Some(0)); // Start with player 0
             game_model.started_at = Set(Some(now));
             game_model.updated_at = Set(now);
 
@@ -811,6 +814,193 @@ pub async fn get_game_state(
         }
     };
 
+    // AI BEHAVIOR LOGIC
+    // Check if it's currently an AI player's turn and they haven't acted yet
+    if let Some(current_turn) = game.current_turn {
+        // Find the current player
+        if let Some(current_player) = game_players.iter().find(|p| p.turn_order == Some(current_turn)) {
+            // Get the user for this player
+            if let Ok(Some(current_user)) = users::Entity::find_by_id(current_player.user_id).one(&**db).await {
+                // If it's an AI player's turn, perform their action
+                if current_user.is_ai {
+                    // Check if they have already acted in this phase
+                    let has_acted = match game.phase {
+                        games::GamePhase::Bidding => {
+                            // Check if they have already bid in the current round
+                            if let Ok(Some(current_round)) = game_rounds::Entity::find()
+                                .filter(game_rounds::Column::GameId.eq(game_id))
+                                .order_by_desc(game_rounds::Column::RoundNumber)
+                                .one(&**db)
+                                .await
+                            {
+                                match round_bids::Entity::find()
+                                    .filter(round_bids::Column::RoundId.eq(current_round.id))
+                                    .filter(round_bids::Column::PlayerId.eq(current_player.id))
+                                    .one(&**db)
+                                    .await
+                                {
+                                    Ok(Some(_)) => true,
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        games::GamePhase::TrumpSelection => {
+                            // Check if trump has already been selected
+                            if let Ok(Some(current_round)) = game_rounds::Entity::find()
+                                .filter(game_rounds::Column::GameId.eq(game_id))
+                                .order_by_desc(game_rounds::Column::RoundNumber)
+                                .one(&**db)
+                                .await
+                            {
+                                current_round.trump_suit.is_some()
+                            } else {
+                                false
+                            }
+                        }
+                        games::GamePhase::Playing => {
+                            // Check if they have already played in the current trick
+                            if let Ok(Some(current_round)) = game_rounds::Entity::find()
+                                .filter(game_rounds::Column::GameId.eq(game_id))
+                                .order_by_desc(game_rounds::Column::RoundNumber)
+                                .one(&**db)
+                                .await
+                            {
+                                if let Ok(Some(current_trick)) = round_tricks::Entity::find()
+                                    .filter(round_tricks::Column::RoundId.eq(current_round.id))
+                                    .order_by_desc(round_tricks::Column::TrickNumber)
+                                    .one(&**db)
+                                    .await
+                                {
+                                    match trick_plays::Entity::find()
+                                        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
+                                        .filter(trick_plays::Column::PlayerId.eq(current_player.id))
+                                        .one(&**db)
+                                        .await
+                                    {
+                                        Ok(Some(_)) => true,
+                                        _ => false,
+                                    }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+
+                    // If AI hasn't acted yet, perform their action
+                    if !has_acted {
+                        match game.phase {
+                            games::GamePhase::Bidding => {
+                                // AI bidding: random bid between 0 and 13
+                                let ai_bid = rand::random::<i32>() % 14;
+                                let bid_request = BidRequest { bid: ai_bid };
+                                
+                                // Call the bidding logic internally
+                                if let Err(e) = perform_ai_bid(game_id, current_player.id, bid_request, &**db).await {
+                                    eprintln!("AI bid failed: {}", e);
+                                }
+                            }
+                            games::GamePhase::TrumpSelection => {
+                                // AI trump selection: random suit
+                                let trump_suits = vec!["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
+                                let ai_trump = trump_suits[rand::random::<usize>() % trump_suits.len()].to_string();
+                                let trump_request = TrumpRequest { trump_suit: ai_trump };
+                                
+                                // Call the trump selection logic internally
+                                if let Err(e) = perform_ai_trump_selection(game_id, current_player.id, trump_request, &**db).await {
+                                    eprintln!("AI trump selection failed: {}", e);
+                                }
+                            }
+                            games::GamePhase::Playing => {
+                                // AI card play: follow suit if possible, otherwise random
+                                if let Ok(Some(current_round)) = game_rounds::Entity::find()
+                                    .filter(game_rounds::Column::GameId.eq(game_id))
+                                    .order_by_desc(game_rounds::Column::RoundNumber)
+                                    .one(&**db)
+                                    .await
+                                {
+                                    if let Ok(Some(current_trick)) = round_tricks::Entity::find()
+                                        .filter(round_tricks::Column::RoundId.eq(current_round.id))
+                                        .order_by_desc(round_tricks::Column::TrickNumber)
+                                        .one(&**db)
+                                        .await
+                                    {
+                                        // Get AI's hand
+                                        let ai_hand = match round_hands::Entity::find()
+                                            .filter(round_hands::Column::RoundId.eq(current_round.id))
+                                            .filter(round_hands::Column::PlayerId.eq(current_player.id))
+                                            .all(&**db)
+                                            .await
+                                        {
+                                            Ok(cards) => cards.into_iter().map(|card| card.card).collect::<Vec<String>>(),
+                                            Err(_) => Vec::new(),
+                                        };
+
+                                        // Get the lead suit from the first card played
+                                        let lead_suit = if let Ok(plays) = trick_plays::Entity::find()
+                                            .filter(trick_plays::Column::TrickId.eq(current_trick.id))
+                                            .order_by(trick_plays::Column::PlayOrder, Order::Asc)
+                                            .all(&**db)
+                                            .await
+                                        {
+                                            if let Some(first_play) = plays.first() {
+                                                // Extract suit from card (e.g., "5S" -> "S")
+                                                if first_play.card.len() >= 2 {
+                                                    Some(first_play.card[first_play.card.len()-1..].to_string())
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+
+                                        // Choose card to play
+                                        let ai_card = if let Some(lead_suit) = lead_suit {
+                                            // Must follow suit if possible
+                                            let cards_of_lead_suit: Vec<String> = ai_hand.iter()
+                                                .filter(|card| {
+                                                    card.len() >= 2 && &card[card.len()-1..] == &lead_suit
+                                                })
+                                                .cloned()
+                                                .collect();
+                                            
+                                            if !cards_of_lead_suit.is_empty() {
+                                                // Play a random card of the lead suit
+                                                cards_of_lead_suit[rand::random::<usize>() % cards_of_lead_suit.len()].clone()
+                                            } else {
+                                                // Can play any card
+                                                ai_hand[rand::random::<usize>() % ai_hand.len()].clone()
+                                            }
+                                        } else {
+                                            // No lead suit (first to play), play any card
+                                            ai_hand[rand::random::<usize>() % ai_hand.len()].clone()
+                                        };
+
+                                        let play_request = PlayRequest { card: ai_card };
+                                        
+                                        // Call the card play logic internally
+                                        if let Err(e) = perform_ai_card_play(game_id, current_player.id, play_request, &**db).await {
+                                            eprintln!("AI card play failed: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Fetch user details for all players and build PlayerSnapshot instances
     let mut players_with_details = Vec::new();
     for game_player in &game_players {
@@ -965,15 +1155,22 @@ pub async fn get_game_state(
                 }
             }
 
-            // Determine current player turn for playing phase
-            let current_player_turn = if game.phase == games::GamePhase::Playing {
+            // Determine current player turn for playing and bidding phases
+            let current_player_turn = if game.phase == games::GamePhase::Playing || game.phase == games::GamePhase::Bidding {
                 if let Some(turn_order) = game.current_turn {
                     // Find the player with this turn order
                     players_with_details.iter()
                         .find(|p| p.turn_order == Some(turn_order))
                         .map(|p| p.id)
                 } else {
-                    None
+                    // For bidding phase, if no current turn is set, default to player 0
+                    if game.phase == games::GamePhase::Bidding {
+                        players_with_details.iter()
+                            .find(|p| p.turn_order == Some(0))
+                            .map(|p| p.id)
+                    } else {
+                        None
+                    }
                 }
             } else {
                 None
@@ -2221,7 +2418,7 @@ async fn calculate_round_scores(
     };
 
 
-
+    
     // Count tricks won by each player
     let tricks_won = match round_tricks::Entity::find()
         .filter(round_tricks::Column::RoundId.eq(*round_id))
@@ -2345,10 +2542,27 @@ async fn create_next_round(
 
     match next_round.insert(db).await {
         Ok(_) => {
-            // Deal cards to players for the new round
-            match deal_cards_to_players(&next_round_id, cards_dealt, db).await {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("Failed to deal cards: {}", e)),
+            // Update game state to bidding phase and set current turn
+            let game = match games::Entity::find_by_id(*game_id).one(db).await {
+                Ok(Some(game)) => game,
+                Ok(None) => return Err("Game not found".to_string()),
+                Err(_) => return Err("Failed to fetch game".to_string()),
+            };
+
+            let mut game_update: games::ActiveModel = game.into();
+            game_update.phase = Set(games::GamePhase::Bidding);
+            game_update.current_turn = Set(Some(0)); // Start bidding with player 0
+            game_update.updated_at = Set(chrono::Utc::now().into());
+
+            match game_update.update(db).await {
+                Ok(_) => {
+                    // Deal cards to players for the new round
+                    match deal_cards_to_players(&next_round_id, cards_dealt, db).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(format!("Failed to deal cards: {}", e)),
+                    }
+                },
+                Err(_) => Err("Failed to update game state".to_string()),
             }
         },
         Err(_) => Err("Failed to create next round".to_string()),
@@ -2745,4 +2959,503 @@ pub async fn get_game_summary(
     Ok(HttpResponse::Ok()
         .content_type("application/json")
         .json(game_summary))
+}
+
+// AI Helper Functions
+
+/// Perform AI bidding action
+async fn perform_ai_bid(
+    game_id: Uuid,
+    player_id: Uuid,
+    bid_request: BidRequest,
+    db: &DatabaseConnection,
+) -> Result<(), String> {
+    // Validate bid value (0-13)
+    let bid_value = bid_request.bid;
+    if bid_value < 0 || bid_value > 13 {
+        return Err("Bid must be between 0 and 13".to_string());
+    }
+
+    // Fetch the game
+    let game = match games::Entity::find_by_id(game_id).one(db).await {
+        Ok(Some(game)) => game,
+        Ok(None) => return Err("Game not found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch game: {}", e)),
+    };
+
+    // Validate that the game is in the Bidding phase
+    if game.phase != games::GamePhase::Bidding {
+        return Err("Game is not in bidding phase".to_string());
+    }
+
+    // Find the current round for this game (latest round)
+    let current_round = match game_rounds::Entity::find()
+        .filter(game_rounds::Column::GameId.eq(game_id))
+        .order_by_desc(game_rounds::Column::RoundNumber)
+        .one(db)
+        .await
+    {
+        Ok(Some(round)) => round,
+        Ok(None) => return Err("No current round found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch current round: {}", e)),
+    };
+
+    // Check if this player has already bid in this round
+    let existing_bid = match round_bids::Entity::find()
+        .filter(round_bids::Column::RoundId.eq(current_round.id))
+        .filter(round_bids::Column::PlayerId.eq(player_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(e) => return Err(format!("Failed to check existing bid: {}", e)),
+    };
+
+    if existing_bid {
+        return Err("Player has already submitted a bid for this round".to_string());
+    }
+
+    // Check if it's this player's turn to bid
+    let current_turn = game.current_turn.unwrap_or(0);
+    let current_player = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .filter(game_players::Column::Id.eq(player_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(player)) => player,
+        Ok(None) => return Err("Player not found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch player data: {}", e)),
+    };
+
+    if current_player.turn_order.unwrap_or(-1) != current_turn {
+        return Err("It's not this player's turn to bid".to_string());
+    }
+
+    // Save the bid to the round_bids table
+    let bid_id = Uuid::new_v4();
+    let round_bid = round_bids::ActiveModel {
+        id: Set(bid_id),
+        round_id: Set(current_round.id),
+        player_id: Set(player_id),
+        bid: Set(bid_value),
+    };
+
+    match round_bid.insert(db).await {
+        Ok(_) => (),
+        Err(e) => return Err(format!("Failed to save bid: {}", e)),
+    }
+
+    // Check if all players have bid in this round
+    let all_players = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .all(db)
+        .await
+    {
+        Ok(players) => players,
+        Err(e) => return Err(format!("Failed to fetch all players: {}", e)),
+    };
+
+    let round_bids = match round_bids::Entity::find()
+        .filter(round_bids::Column::RoundId.eq(current_round.id))
+        .all(db)
+        .await
+    {
+        Ok(bids) => bids,
+        Err(e) => return Err(format!("Failed to fetch round bids: {}", e)),
+    };
+
+    let all_bids_submitted = round_bids.len() == all_players.len();
+
+    if all_bids_submitted {
+        // Transition the game to TrumpSelection phase
+        let game_update = games::ActiveModel {
+            id: Set(game.id),
+            state: Set(game.state),
+            phase: Set(games::GamePhase::TrumpSelection),
+            current_turn: Set(Some(0)), // Reset turn for trump selection
+            created_at: Set(game.created_at),
+            updated_at: Set(chrono::Utc::now().into()),
+            started_at: Set(game.started_at),
+            completed_at: Set(game.completed_at),
+        };
+
+        match game_update.update(db).await {
+            Ok(_) => (),
+            Err(e) => return Err(format!("Failed to transition game phase: {}", e)),
+        }
+    } else {
+        // Move to next player's turn
+        let next_turn = (current_turn + 1) % 4;
+        let game_update = games::ActiveModel {
+            id: Set(game.id),
+            state: Set(game.state),
+            phase: Set(game.phase),
+            current_turn: Set(Some(next_turn)),
+            created_at: Set(game.created_at),
+            updated_at: Set(chrono::Utc::now().into()),
+            started_at: Set(game.started_at),
+            completed_at: Set(game.completed_at),
+        };
+
+        match game_update.update(db).await {
+            Ok(_) => (),
+            Err(e) => return Err(format!("Failed to update turn: {}", e)),
+        }
+    }
+
+    Ok(())
+}
+
+/// Perform AI trump selection action
+async fn perform_ai_trump_selection(
+    game_id: Uuid,
+    player_id: Uuid,
+    trump_request: TrumpRequest,
+    db: &DatabaseConnection,
+) -> Result<(), String> {
+    // Validate trump suit
+    let trump_suit = &trump_request.trump_suit;
+    let valid_suits = vec!["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
+    if !valid_suits.contains(&trump_suit.as_str()) {
+        return Err("Invalid trump suit. Must be one of: Spades, Hearts, Diamonds, Clubs, NoTrump".to_string());
+    }
+
+    // Fetch the game
+    let game = match games::Entity::find_by_id(game_id).one(db).await {
+        Ok(Some(game)) => game,
+        Ok(None) => return Err("Game not found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch game: {}", e)),
+    };
+
+    // Validate that the game is in the TrumpSelection phase
+    if game.phase != games::GamePhase::TrumpSelection {
+        return Err("Game is not in trump selection phase".to_string());
+    }
+
+    // Fetch the current round for this game (latest round)
+    let current_round = match game_rounds::Entity::find()
+        .filter(game_rounds::Column::GameId.eq(game_id))
+        .order_by_desc(game_rounds::Column::RoundNumber)
+        .one(db)
+        .await
+    {
+        Ok(Some(round)) => round,
+        Ok(None) => return Err("No current round found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch current round: {}", e)),
+    };
+
+    // Check if trump has already been selected for this round
+    if current_round.trump_suit.is_some() {
+        return Err("Trump has already been selected for this round".to_string());
+    }
+
+    // Fetch all bids for this round to determine the highest bidder
+    let round_bids = match round_bids::Entity::find()
+        .filter(round_bids::Column::RoundId.eq(current_round.id))
+        .all(db)
+        .await
+    {
+        Ok(bids) => bids,
+        Err(e) => return Err(format!("Failed to fetch round bids: {}", e)),
+    };
+
+    // Find the highest bid and the player who bid first in case of ties
+    let mut highest_bid = -1;
+    let mut trump_chooser_id = None;
+    let mut first_bid_time = None;
+
+    for bid in &round_bids {
+        if bid.bid > highest_bid {
+            highest_bid = bid.bid;
+            trump_chooser_id = Some(bid.player_id);
+            first_bid_time = Some(bid.id);
+        } else if bid.bid == highest_bid {
+            // In case of tie, the first bidder wins
+            if first_bid_time.is_none() {
+                trump_chooser_id = Some(bid.player_id);
+                first_bid_time = Some(bid.id);
+            }
+        }
+    }
+
+    // Validate that the current player is the designated trump chooser
+    if player_id != trump_chooser_id.unwrap_or_default() {
+        return Err("Only the highest bidder can choose the trump suit".to_string());
+    }
+
+    // Update the round with the trump suit
+    let round_update = game_rounds::ActiveModel {
+        id: Set(current_round.id),
+        game_id: Set(current_round.game_id),
+        round_number: Set(current_round.round_number),
+        dealer_player_id: Set(current_round.dealer_player_id),
+        trump_suit: Set(Some(trump_suit.clone())),
+        cards_dealt: Set(current_round.cards_dealt),
+        created_at: Set(current_round.created_at),
+    };
+
+    match round_update.update(db).await {
+        Ok(_) => (),
+        Err(e) => return Err(format!("Failed to update round with trump suit: {}", e)),
+    }
+
+    // Transition the game to Playing phase
+    let game_update = games::ActiveModel {
+        id: Set(game.id),
+        state: Set(game.state),
+        phase: Set(games::GamePhase::Playing),
+        current_turn: Set(Some(0)), // Reset turn for playing phase
+        created_at: Set(game.created_at),
+        updated_at: Set(chrono::Utc::now().into()),
+        started_at: Set(game.started_at),
+        completed_at: Set(game.completed_at),
+    };
+
+    match game_update.update(db).await {
+        Ok(_) => (),
+        Err(e) => return Err(format!("Failed to transition game to playing phase: {}", e)),
+    }
+
+    Ok(())
+}
+
+/// Perform AI card play action
+async fn perform_ai_card_play(
+    game_id: Uuid,
+    player_id: Uuid,
+    play_request: PlayRequest,
+    db: &DatabaseConnection,
+) -> Result<(), String> {
+    // Fetch the game
+    let game = match games::Entity::find_by_id(game_id).one(db).await {
+        Ok(Some(game)) => game,
+        Ok(None) => return Err("Game not found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch game: {}", e)),
+    };
+
+    // Validate that the game is in the Playing phase
+    if game.phase != games::GamePhase::Playing {
+        return Err("Game is not in playing phase".to_string());
+    }
+
+    // Fetch the current player's game_player record
+    let current_player = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .filter(game_players::Column::Id.eq(player_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(player)) => player,
+        Ok(None) => return Err("Player not found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch player data: {}", e)),
+    };
+
+    // Fetch the current round
+    let current_round = match game_rounds::Entity::find()
+        .filter(game_rounds::Column::GameId.eq(game_id))
+        .order_by_desc(game_rounds::Column::RoundNumber)
+        .one(db)
+        .await
+    {
+        Ok(Some(round)) => round,
+        Ok(None) => return Err("No current round found".to_string()),
+        Err(e) => return Err(format!("Failed to fetch current round: {}", e)),
+    };
+
+    // Get or create the current trick
+    let current_trick = match round_tricks::Entity::find()
+        .filter(round_tricks::Column::RoundId.eq(current_round.id))
+        .order_by_desc(round_tricks::Column::TrickNumber)
+        .one(db)
+        .await
+    {
+        Ok(Some(trick)) => {
+            // Check if this trick is complete (has 4 plays)
+            let trick_plays_count = match trick_plays::Entity::find()
+                .filter(trick_plays::Column::TrickId.eq(trick.id))
+                .count(db)
+                .await
+            {
+                Ok(count) => count,
+                Err(_) => return Err("Failed to count trick plays".to_string()),
+            };
+
+            if trick_plays_count >= 4 {
+                // Create a new trick
+                let new_trick_number = trick.trick_number + 1;
+                let new_trick = round_tricks::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    round_id: Set(current_round.id),
+                    trick_number: Set(new_trick_number),
+                    winner_player_id: Set(None),
+                    created_at: Set(chrono::Utc::now().into()),
+                };
+
+                match new_trick.insert(db).await {
+                    Ok(inserted_trick) => inserted_trick,
+                    Err(e) => return Err(format!("Failed to create new trick: {}", e)),
+                }
+            } else {
+                trick
+            }
+        }
+        Ok(None) => {
+            // Create the first trick
+            let first_trick = round_tricks::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                round_id: Set(current_round.id),
+                trick_number: Set(1),
+                winner_player_id: Set(None),
+                created_at: Set(chrono::Utc::now().into()),
+            };
+
+            match first_trick.insert(db).await {
+                Ok(inserted_trick) => inserted_trick,
+                Err(e) => return Err(format!("Failed to create first trick: {}", e)),
+            }
+        }
+        Err(e) => return Err(format!("Failed to fetch current trick: {}", e)),
+    };
+
+    // Check if it's the current player's turn
+    let current_turn = game.current_turn.unwrap_or(0);
+    if current_player.turn_order.unwrap_or(-1) != current_turn {
+        return Err("It's not this player's turn to play".to_string());
+    }
+
+    // Validate the card format (e.g., "5S", "AH", "KD")
+    let card = &play_request.card;
+    if !is_valid_card_format(card) {
+        return Err("Invalid card format. Use format like '5S', 'AH', 'KD'".to_string());
+    }
+
+    // Get the play order for this trick
+    let play_order = match trick_plays::Entity::find()
+        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
+        .count(db)
+        .await
+    {
+        Ok(count) => count as i32 + 1,
+        Err(_) => return Err("Failed to determine play order".to_string()),
+    };
+
+    // Store the card play
+    let trick_play = trick_plays::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        trick_id: Set(current_trick.id),
+        player_id: Set(player_id),
+        card: Set(card.clone()),
+        play_order: Set(play_order),
+    };
+
+    match trick_play.insert(db).await {
+        Ok(_) => (),
+        Err(e) => return Err(format!("Failed to store card play: {}", e)),
+    }
+
+    // Check if this was the 4th card played
+    if play_order == 4 {
+        // Determine the winner of the trick
+        let winner_player_id = match determine_trick_winner(&current_trick.id, &current_round.trump_suit, db).await {
+            Ok(winner_id) => winner_id,
+            Err(e) => return Err(format!("Failed to determine trick winner: {}", e)),
+        };
+
+        // Update the trick with the winner
+        let mut trick_update: round_tricks::ActiveModel = current_trick.into();
+        trick_update.winner_player_id = Set(Some(winner_player_id));
+        match trick_update.update(db).await {
+            Ok(_) => (),
+            Err(e) => return Err(format!("Failed to update trick winner: {}", e)),
+        }
+
+        // Check if this was the last trick of the round
+        let total_tricks_in_round = match round_tricks::Entity::find()
+            .filter(round_tricks::Column::RoundId.eq(current_round.id))
+            .count(db)
+            .await
+        {
+            Ok(count) => count,
+            Err(_) => return Err("Failed to count tricks in round".to_string()),
+        };
+
+        // Check if we've played all tricks for this round (based on cards_dealt)
+        if total_tricks_in_round >= current_round.cards_dealt as u64 {
+            // Calculate scores for the round
+            if let Err(e) = calculate_round_scores(&current_round.id, db).await {
+                return Err(format!("Failed to calculate round scores: {}", e));
+            }
+
+            // Create the next round
+            if let Err(e) = create_next_round(&game_id, db).await {
+                return Err(format!("Failed to create next round: {}", e));
+            }
+
+            // Transition back to bidding phase
+            let game_update = games::ActiveModel {
+                id: Set(game.id),
+                state: Set(game.state),
+                phase: Set(games::GamePhase::Bidding),
+                current_turn: Set(None),
+                created_at: Set(game.created_at),
+                updated_at: Set(chrono::Utc::now().into()),
+                started_at: Set(game.started_at),
+                completed_at: Set(game.completed_at),
+            };
+
+            match game_update.update(db).await {
+                Ok(_) => (),
+                Err(e) => return Err(format!("Failed to transition to bidding phase: {}", e)),
+            }
+        } else {
+            // Start next trick with the winner leading
+            let next_turn = match game_players::Entity::find()
+                .filter(game_players::Column::GameId.eq(game_id))
+                .filter(game_players::Column::Id.eq(winner_player_id))
+                .one(db)
+                .await
+            {
+                Ok(Some(winner_player)) => winner_player.turn_order.unwrap_or(0),
+                _ => 0,
+            };
+
+            let game_update = games::ActiveModel {
+                id: Set(game.id),
+                state: Set(game.state),
+                phase: Set(game.phase),
+                current_turn: Set(Some(next_turn)),
+                created_at: Set(game.created_at),
+                updated_at: Set(chrono::Utc::now().into()),
+                started_at: Set(game.started_at),
+                completed_at: Set(game.completed_at),
+            };
+
+            match game_update.update(db).await {
+                Ok(_) => (),
+                Err(e) => return Err(format!("Failed to update turn order: {}", e)),
+            }
+        }
+    } else {
+        // Move to next player's turn
+        let next_turn = (current_turn + 1) % 4;
+        let game_update = games::ActiveModel {
+            id: Set(game.id),
+            state: Set(game.state),
+            phase: Set(game.phase),
+            current_turn: Set(Some(next_turn)),
+            created_at: Set(game.created_at),
+            updated_at: Set(chrono::Utc::now().into()),
+            started_at: Set(game.started_at),
+            completed_at: Set(game.completed_at),
+        };
+
+        match game_update.update(db).await {
+            Ok(_) => (),
+            Err(e) => return Err(format!("Failed to update turn order: {}", e)),
+        }
+    }
+
+    Ok(())
 }
