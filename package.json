@@ -11,14 +11,19 @@
     "dev:frontend": "cd apps/frontend && pnpm dev",
     "build": "pnpm --recursive run build",
     "test": "pnpm --recursive run test",
-    "backend:fmt": "cargo fmt --manifest-path ./apps/backend/Cargo.toml",
-    "backend:fmt:check": "cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check",
-    "backend:clippy": "cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings",
     "db:start": "docker compose up -d postgres",
     "db:stop": "docker compose down",
     "db:restart": "docker compose restart postgres",
     "db:logs": "docker compose logs -f postgres",
     "db:reset": "docker compose down -v && docker compose up -d --build postgres",
+
+    "backend:fmt": "cargo fmt --manifest-path ./apps/backend/Cargo.toml",
+    "backend:fmt:check": "cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check",
+    "backend:clippy": "cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings",
+    "frontend:lint": "pnpm -C apps/frontend exec eslint --max-warnings=0 .",
+    "frontend:fmt:check": "pnpm -C apps/frontend exec prettier --check .",
+    "frontend:fmt": "pnpm -C apps/frontend exec prettier --write .",
+    "frontend:typecheck": "pnpm -C apps/frontend exec tsc -p tsconfig.json --noEmit",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
