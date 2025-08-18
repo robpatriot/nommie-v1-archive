@@ -80,7 +80,7 @@ async fn main() -> std::io::Result<()> {
     });
 
     println!("Starting Nommie backend server...");
-    println!("Database URL: {}", database_url);
+    println!("Database URL: {database_url}");
 
     // Connect to database
     let db: DatabaseConnection = Database::connect(&database_url)
