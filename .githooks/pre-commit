@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[pre-commit] Checking Rust formatting..."
+cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check
+
+echo "[pre-commit] Running clippy (deny warnings)..."
+cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
+
+echo "[pre-commit] OK"
+

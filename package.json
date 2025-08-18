@@ -18,7 +18,8 @@
     "db:stop": "docker compose down",
     "db:restart": "docker compose restart postgres",
     "db:logs": "docker compose logs -f postgres",
-    "db:reset": "docker compose down -v && docker compose up -d --build postgres"
+    "db:reset": "docker compose down -v && docker compose up -d --build postgres",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "concurrently": "^9.2.0",
