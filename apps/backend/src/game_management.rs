@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse, HttpRequest, Result as ActixResult};
+use actix_web::{get, post, delete, web, HttpResponse, HttpRequest, Result as ActixResult};
 use sea_orm::{DatabaseConnection, ActiveModelTrait, Set, EntityTrait, QueryFilter, ColumnTrait, QueryOrder, Order, PaginatorTrait};
 use sea_orm_migration::prelude::Query;
 use serde_json::json;
@@ -211,12 +211,17 @@ pub async fn get_games(
         let player_count = game_players.len();
         let is_player_in_game = game_players.iter().any(|gp| gp.user_id == user.id);
         
+        // Check if current user is the creator (turn_order 0)
+        let is_creator = game_players.iter()
+            .any(|gp| gp.user_id == user.id && gp.turn_order == Some(0));
+        
         games_list.push(json!({
             "id": game.id,
             "state": game.state,
             "player_count": player_count,
             "max_players": 4, // Assuming 4 players max for now
-            "is_player_in_game": is_player_in_game
+            "is_player_in_game": is_player_in_game,
+            "is_creator": is_creator
         }));
     }
 
@@ -3458,4 +3463,91 @@ async fn perform_ai_card_play(
     }
 
     Ok(())
+}
+
+#[delete("/game/{game_id}")]
+pub async fn delete_game(
+    req: HttpRequest,
+    path: web::Path<String>,
+    db: web::Data<DatabaseConnection>,
+) -> ActixResult<HttpResponse> {
+    // Extract user from JWT authentication
+    let user = match get_user(&req) {
+        Some(user) => user,
+        None => {
+            return Ok(HttpResponse::Unauthorized()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "User not authenticated"
+                })));
+        }
+    };
+
+    // Parse game ID from path
+    let game_id = match Uuid::parse_str(&path.into_inner()) {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Invalid game ID format"
+                })));
+        }
+    };
+
+    // Check if user is a participant in the game
+    let user_in_game = match game_players::Entity::find()
+        .filter(game_players::Column::GameId.eq(game_id))
+        .filter(game_players::Column::UserId.eq(user.id))
+        .one(&**db)
+        .await
+    {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to check if user is in game",
+                    "details": e.to_string()
+                })));
+        }
+    };
+
+    if !user_in_game {
+        return Ok(HttpResponse::Forbidden()
+            .content_type("application/json")
+            .json(json!({
+                "error": "User is not a participant in this game"
+            })));
+    }
+
+    // Delete the game and all associated data
+    // Due to foreign key constraints with CASCADE, deleting the game will automatically delete:
+    // - game_players
+    // - game_rounds
+    // - round_bids
+    // - round_tricks
+    // - trick_plays
+    // - round_scores
+    // - round_hands
+
+    match games::Entity::delete_by_id(game_id).exec(&**db).await {
+        Ok(_) => {
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .json(json!({
+                    "success": true,
+                    "message": "Game deleted successfully"
+                })))
+        }
+        Err(e) => {
+            Ok(HttpResponse::InternalServerError()
+                .content_type("application/json")
+                .json(json!({
+                    "error": "Failed to delete game",
+                    "details": e.to_string()
+                })))
+        }
+    }
 }

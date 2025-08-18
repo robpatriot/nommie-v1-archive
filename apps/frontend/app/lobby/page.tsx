@@ -13,6 +13,7 @@ interface Game {
   player_count: number;
   max_players?: number;
   is_player_in_game?: boolean;
+  is_creator?: boolean;
 }
 
 interface JoinGameResponse {
@@ -146,6 +147,42 @@ export default function LobbyPage() {
 
   const navigateToGame = (gameId: string) => {
     router.push(`/game/${gameId}`);
+  };
+
+  const deleteGame = async (gameId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent navigation to game page
+    
+    if (!confirm('Are you sure you want to delete this game? This action cannot be undone.')) {
+      return;
+    }
+    
+    setError(null);
+    
+    try {
+      const session = await import('next-auth/react').then(m => m.getSession());
+      
+      if (!session?.accessToken) {
+        throw new Error('No access token available');
+      }
+      
+      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      // Refresh the games list
+      await fetchGames();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   // Show loading state
@@ -308,6 +345,15 @@ export default function LobbyPage() {
                       </div>
                       
                       <div className="flex items-center space-x-2">
+                        {game.is_creator && (
+                          <button
+                            onClick={(e) => deleteGame(game.id, e)}
+                            className="px-2 py-1 text-xs text-red-600 hover:text-red-800 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20 rounded border border-red-200 dark:border-red-700 hover:border-red-300 dark:hover:border-red-600 transition-colors"
+                            title="Delete this game"
+                          >
+                            Delete
+                          </button>
+                        )}
                         {game.is_player_in_game ? (
                           <span className="px-3 py-1 text-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">
                             You're in this game

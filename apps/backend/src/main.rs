@@ -14,7 +14,7 @@ mod dto;
 use migration::Migrator;
 use migration::MigratorTrait;
 use jwt::{JwtAuth, get_claims, get_user};
-use game_management::{create_game, get_games, mark_player_ready, add_ai_player, join_game, get_game_state, get_game_summary, submit_bid, submit_trump, play_card};
+use game_management::{create_game, get_games, mark_player_ready, add_ai_player, join_game, get_game_state, get_game_summary, submit_bid, submit_trump, play_card, delete_game};
 
 //extern crate sea_query;
 
@@ -124,6 +124,7 @@ async fn main() -> std::io::Result<()> {
                 .service(submit_bid)
                 .service(submit_trump)
                 .service(play_card)
+                .service(delete_game)
                 )
     })
     .bind(("127.0.0.1", 8080))?
