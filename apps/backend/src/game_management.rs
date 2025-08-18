@@ -746,6 +746,8 @@ pub async fn get_game_state(
         }
     };
 
+
+
     // Fetch the game
     let game = match games::Entity::find_by_id(game_id).one(&**db).await {
         Ok(Some(game)) => game,
@@ -765,6 +767,8 @@ pub async fn get_game_state(
                 })));
         }
     };
+
+
 
     // Reject completed games - use /summary endpoint instead
     if game.state == games::GameState::Completed {
@@ -819,15 +823,25 @@ pub async fn get_game_state(
         }
     };
 
+
+
     // AI BEHAVIOR LOGIC
     // Check if it's currently an AI player's turn and they haven't acted yet
     if let Some(current_turn) = game.current_turn {
+
+        
         // Find the current player
         if let Some(current_player) = game_players.iter().find(|p| p.turn_order == Some(current_turn)) {
+
+            
             // Get the user for this player
             if let Ok(Some(current_user)) = users::Entity::find_by_id(current_player.user_id).one(&**db).await {
+
+                
                 // If it's an AI player's turn, perform their action
                 if current_user.is_ai {
+
+                    
                     // Check if they have already acted in this phase
                     let has_acted = match game.phase {
                         games::GamePhase::Bidding => {
@@ -897,28 +911,40 @@ pub async fn get_game_state(
                         _ => false,
                     };
 
+
+
                     // If AI hasn't acted yet, perform their action
                     if !has_acted {
+
+                        
                         match game.phase {
                             games::GamePhase::Bidding => {
                                 // AI bidding: random bid between 0 and 13
                                 let ai_bid = rand::random::<i32>() % 14;
                                 let bid_request = BidRequest { bid: ai_bid };
                                 
+
+                                
                                 // Call the bidding logic internally
                                 if let Err(e) = perform_ai_bid(game_id, current_player.id, bid_request, &**db).await {
-                                    eprintln!("AI bid failed: {}", e);
+                                    eprintln!("[ERROR] get_game_state: AI bid failed: {}", e);
+                                } else {
+
                                 }
                             }
                             games::GamePhase::TrumpSelection => {
                                 // AI trump selection: random suit
                                 let trump_suits = vec!["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
                                 let ai_trump = trump_suits[rand::random::<usize>() % trump_suits.len()].to_string();
-                                let trump_request = TrumpRequest { trump_suit: ai_trump };
+                                let trump_request = TrumpRequest { trump_suit: ai_trump.clone() };
+                                
+
                                 
                                 // Call the trump selection logic internally
                                 if let Err(e) = perform_ai_trump_selection(game_id, current_player.id, trump_request, &**db).await {
-                                    eprintln!("AI trump selection failed: {}", e);
+                                    eprintln!("[ERROR] get_game_state: AI trump selection failed: {}", e);
+                                } else {
+                                    
                                 }
                             }
                             games::GamePhase::Playing => {
@@ -989,20 +1015,106 @@ pub async fn get_game_state(
                                             ai_hand[rand::random::<usize>() % ai_hand.len()].clone()
                                         };
 
-                                        let play_request = PlayRequest { card: ai_card };
+                                        let play_request = PlayRequest { card: ai_card.clone() };
+                                        
+
                                         
                                         // Call the card play logic internally
                                         if let Err(e) = perform_ai_card_play(game_id, current_player.id, play_request, &**db).await {
-                                            eprintln!("AI card play failed: {}", e);
+                                            eprintln!("[ERROR] get_game_state: AI card play failed: {}", e);
+                                        } else {
+                                            
                                         }
                                     }
                                 }
                             }
-                            _ => {}
+                            _ => {
+                                
+                            }
+                        }
+                    } else {
+                        
+                    }
+                } else {
+                    
+                }
+            } else {
+                
+            }
+        } else {
+            
+        }
+    } else {
+        
+    }
+
+    // SPECIAL HANDLING FOR TRUMP SELECTION PHASE
+    // In trump selection phase, the highest bidder (not the current turn player) should choose trump
+    if game.phase == games::GamePhase::TrumpSelection {
+        
+        // Get the current round
+        if let Ok(Some(current_round)) = game_rounds::Entity::find()
+            .filter(game_rounds::Column::GameId.eq(game_id))
+            .order_by_desc(game_rounds::Column::RoundNumber)
+            .one(&**db)
+            .await
+        {
+            // Check if trump has already been selected
+            if current_round.trump_suit.is_none() {
+                // Get all bids for this round to find the highest bidder
+                if let Ok(round_bids) = round_bids::Entity::find()
+                    .filter(round_bids::Column::RoundId.eq(current_round.id))
+                    .all(&**db)
+                    .await
+                {
+                    // Find the highest bidder
+                    let mut highest_bid = -1;
+                    let mut highest_bidder_id = None;
+                    
+                    for bid in &round_bids {
+                        if bid.bid > highest_bid {
+                            highest_bid = bid.bid;
+                            highest_bidder_id = Some(bid.player_id);
                         }
                     }
+                    
+                    if let Some(highest_bidder_id) = highest_bidder_id {
+                        // Get the highest bidder's player info
+                        if let Ok(Some(highest_bidder)) = game_players::Entity::find_by_id(highest_bidder_id).one(&**db).await {
+                            // Get the user info to check if they're AI
+                            if let Ok(Some(user_info)) = users::Entity::find_by_id(highest_bidder.user_id).one(&**db).await {
+                                if user_info.is_ai {
+                                    // AI trump selection: random suit
+                                    let trump_suits = vec!["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
+                                    let ai_trump = trump_suits[rand::random::<usize>() % trump_suits.len()].to_string();
+                                    let trump_request = TrumpRequest { trump_suit: ai_trump.clone() };
+                                    
+                                    // Call the trump selection logic internally
+                                    if let Err(e) = perform_ai_trump_selection(game_id, highest_bidder_id, trump_request, &**db).await {
+                                        eprintln!("[ERROR] get_game_state: AI trump selection failed: {}", e);
+                                    } else {
+                                        
+                                    }
+                                } else {
+                                    
+                                }
+                            } else {
+                                
+                            }
+                        } else {
+                            
+                        }
+                    } else {
+                        
+                    }
+                } else {
+                    
                 }
+            } else {
+                
             }
+        } else {
+            
         }
     }
 
@@ -1281,6 +1393,8 @@ pub async fn get_game_state(
         trump_chooser_id,
     };
 
+
+
     Ok(HttpResponse::Ok()
         .content_type("application/json")
         .json(game_snapshot))
@@ -1305,6 +1419,8 @@ pub async fn submit_bid(
         }
     };
 
+
+
     // Parse game ID from path
     let game_id = match path.parse::<Uuid>() {
         Ok(id) => id,
@@ -1316,6 +1432,8 @@ pub async fn submit_bid(
                 })));
         }
     };
+
+
 
     // Validate bid value (0-13)
     let bid_value = bid_data.bid;
@@ -1347,6 +1465,8 @@ pub async fn submit_bid(
         }
     };
 
+
+
     // Fetch the current player's game_player record
     let current_player = match game_players::Entity::find()
         .filter(game_players::Column::GameId.eq(game_id))
@@ -1371,6 +1491,8 @@ pub async fn submit_bid(
                 })));
         }
     };
+
+
 
     // Validate that the game is in the Bidding phase
     if game.phase != games::GamePhase::Bidding {
@@ -1405,6 +1527,8 @@ pub async fn submit_bid(
                 })));
         }
     };
+
+
 
     // Check if this player has already bid in this round
     let existing_bid = match round_bids::Entity::find()
@@ -1464,6 +1588,8 @@ pub async fn submit_bid(
         }
     }
 
+
+
     // Check if all players have bid in this round
     let all_players = match game_players::Entity::find()
         .filter(game_players::Column::GameId.eq(game_id))
@@ -1499,7 +1625,20 @@ pub async fn submit_bid(
 
     let all_bids_submitted = round_bids.len() == all_players.len();
 
+
+
     if all_bids_submitted {
+        // Find the highest bidder
+        let mut highest_bid = -1;
+        let mut highest_bidder_id = None;
+        
+        for bid in &round_bids {
+            if bid.bid > highest_bid {
+                highest_bid = bid.bid;
+                highest_bidder_id = Some(bid.player_id);
+            }
+        }
+
         // Transition the game to TrumpSelection phase
         let game_update = games::ActiveModel {
             id: Set(game.id),
@@ -1526,6 +1665,7 @@ pub async fn submit_bid(
     } else {
         // Move to next player's turn
         let next_turn = (current_turn + 1) % 4;
+        
         let game_update = games::ActiveModel {
             id: Set(game.id),
             state: Set(game.state),
@@ -1578,6 +1718,8 @@ pub async fn submit_trump(
         }
     };
 
+
+
     // Parse game ID from path
     let game_id = match path.parse::<Uuid>() {
         Ok(id) => id,
@@ -1589,6 +1731,8 @@ pub async fn submit_trump(
                 })));
         }
     };
+
+
 
     // Validate trump suit
     let trump_suit = &trump_data.trump_suit;
@@ -1620,6 +1764,8 @@ pub async fn submit_trump(
                 })));
         }
     };
+
+
 
     // Validate that the game is in the TrumpSelection phase
     if game.phase != games::GamePhase::TrumpSelection {
@@ -1655,6 +1801,8 @@ pub async fn submit_trump(
         }
     };
 
+
+
     // Check if trump has already been selected for this round
     if current_round.trump_suit.is_some() {
         return Ok(HttpResponse::BadRequest()
@@ -1681,6 +1829,8 @@ pub async fn submit_trump(
         }
     };
 
+
+
     // Find the highest bid and the player who bid first in case of ties
     let mut highest_bid = -1;
     let mut trump_chooser_id = None;
@@ -1702,6 +1852,8 @@ pub async fn submit_trump(
             }
         }
     }
+
+
 
     // Fetch the current player's game_player record
     let current_player = match game_players::Entity::find()
@@ -1728,6 +1880,8 @@ pub async fn submit_trump(
         }
     };
 
+
+
     // Validate that the current player is the designated trump chooser
     if current_player.id != trump_chooser_id.unwrap_or_default() {
         return Ok(HttpResponse::Forbidden()
@@ -1736,6 +1890,8 @@ pub async fn submit_trump(
                 "error": "Only the highest bidder can choose the trump suit"
             })));
     }
+
+
 
     // Update the round with the trump suit
     let round_update = game_rounds::ActiveModel {
@@ -1783,6 +1939,8 @@ pub async fn submit_trump(
                 })));
         }
     }
+
+
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
@@ -2975,18 +3133,29 @@ async fn perform_ai_bid(
     bid_request: BidRequest,
     db: &DatabaseConnection,
 ) -> Result<(), String> {
+
+    
     // Validate bid value (0-13)
     let bid_value = bid_request.bid;
     if bid_value < 0 || bid_value > 13 {
+        println!("[ERROR] perform_ai_bid: Invalid bid value: {}", bid_value);
         return Err("Bid must be between 0 and 13".to_string());
     }
 
     // Fetch the game
     let game = match games::Entity::find_by_id(game_id).one(db).await {
         Ok(Some(game)) => game,
-        Ok(None) => return Err("Game not found".to_string()),
-        Err(e) => return Err(format!("Failed to fetch game: {}", e)),
+        Ok(None) => {
+            println!("[ERROR] perform_ai_bid: Game not found: {}", game_id);
+            return Err("Game not found".to_string());
+        },
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to fetch game: {}", e);
+            return Err(format!("Failed to fetch game: {}", e));
+        },
     };
+
+
 
     // Validate that the game is in the Bidding phase
     if game.phase != games::GamePhase::Bidding {
@@ -3001,9 +3170,17 @@ async fn perform_ai_bid(
         .await
     {
         Ok(Some(round)) => round,
-        Ok(None) => return Err("No current round found".to_string()),
-        Err(e) => return Err(format!("Failed to fetch current round: {}", e)),
+        Ok(None) => {
+            println!("[ERROR] perform_ai_bid: No current round found for game: {}", game_id);
+            return Err("No current round found".to_string());
+        },
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to fetch current round: {}", e);
+            return Err(format!("Failed to fetch current round: {}", e));
+        },
     };
+
+
 
     // Check if this player has already bid in this round
     let existing_bid = match round_bids::Entity::find()
@@ -3014,7 +3191,10 @@ async fn perform_ai_bid(
     {
         Ok(Some(_)) => true,
         Ok(None) => false,
-        Err(e) => return Err(format!("Failed to check existing bid: {}", e)),
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to check existing bid: {}", e);
+            return Err(format!("Failed to check existing bid: {}", e));
+        },
     };
 
     if existing_bid {
@@ -3030,9 +3210,17 @@ async fn perform_ai_bid(
         .await
     {
         Ok(Some(player)) => player,
-        Ok(None) => return Err("Player not found".to_string()),
-        Err(e) => return Err(format!("Failed to fetch player data: {}", e)),
+        Ok(None) => {
+            println!("[ERROR] perform_ai_bid: Player not found: {}", player_id);
+            return Err("Player not found".to_string());
+        },
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to fetch player data: {}", e);
+            return Err(format!("Failed to fetch player data: {}", e));
+        },
     };
+
+
 
     if current_player.turn_order.unwrap_or(-1) != current_turn {
         return Err("It's not this player's turn to bid".to_string());
@@ -3049,7 +3237,9 @@ async fn perform_ai_bid(
 
     match round_bid.insert(db).await {
         Ok(_) => (),
-        Err(e) => return Err(format!("Failed to save bid: {}", e)),
+        Err(e) => {
+            return Err(format!("Failed to save bid: {}", e));
+        },
     }
 
     // Check if all players have bid in this round
@@ -3059,7 +3249,10 @@ async fn perform_ai_bid(
         .await
     {
         Ok(players) => players,
-        Err(e) => return Err(format!("Failed to fetch all players: {}", e)),
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to fetch all players: {}", e);
+            return Err(format!("Failed to fetch all players: {}", e));
+        },
     };
 
     let round_bids = match round_bids::Entity::find()
@@ -3068,12 +3261,19 @@ async fn perform_ai_bid(
         .await
     {
         Ok(bids) => bids,
-        Err(e) => return Err(format!("Failed to fetch round bids: {}", e)),
+        Err(e) => {
+            println!("[ERROR] perform_ai_bid: Failed to fetch round bids: {}", e);
+            return Err(format!("Failed to fetch round bids: {}", e));
+        },
     };
 
     let all_bids_submitted = round_bids.len() == all_players.len();
 
+
+
     if all_bids_submitted {
+
+        
         // Transition the game to TrumpSelection phase
         let game_update = games::ActiveModel {
             id: Set(game.id),
@@ -3088,11 +3288,14 @@ async fn perform_ai_bid(
 
         match game_update.update(db).await {
             Ok(_) => (),
-            Err(e) => return Err(format!("Failed to transition game phase: {}", e)),
+            Err(e) => {
+                return Err(format!("Failed to transition game phase: {}", e));
+            },
         }
     } else {
         // Move to next player's turn
         let next_turn = (current_turn + 1) % 4;
+        
         let game_update = games::ActiveModel {
             id: Set(game.id),
             state: Set(game.state),
@@ -3106,9 +3309,12 @@ async fn perform_ai_bid(
 
         match game_update.update(db).await {
             Ok(_) => (),
-            Err(e) => return Err(format!("Failed to update turn: {}", e)),
+            Err(e) => {
+                return Err(format!("Failed to update turn: {}", e));
+            },
         }
     }
+
 
     Ok(())
 }
@@ -3120,19 +3326,30 @@ async fn perform_ai_trump_selection(
     trump_request: TrumpRequest,
     db: &DatabaseConnection,
 ) -> Result<(), String> {
+
+    
     // Validate trump suit
     let trump_suit = &trump_request.trump_suit;
     let valid_suits = vec!["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
     if !valid_suits.contains(&trump_suit.as_str()) {
+        println!("[ERROR] perform_ai_trump_selection: Invalid trump suit: {}", trump_suit);
         return Err("Invalid trump suit. Must be one of: Spades, Hearts, Diamonds, Clubs, NoTrump".to_string());
     }
+
+
 
     // Fetch the game
     let game = match games::Entity::find_by_id(game_id).one(db).await {
         Ok(Some(game)) => game,
-        Ok(None) => return Err("Game not found".to_string()),
-        Err(e) => return Err(format!("Failed to fetch game: {}", e)),
+        Ok(None) => {
+            return Err("Game not found".to_string());
+        },
+        Err(e) => {
+            return Err(format!("Failed to fetch game: {}", e));
+        },
     };
+
+
 
     // Validate that the game is in the TrumpSelection phase
     if game.phase != games::GamePhase::TrumpSelection {
@@ -3147,9 +3364,15 @@ async fn perform_ai_trump_selection(
         .await
     {
         Ok(Some(round)) => round,
-        Ok(None) => return Err("No current round found".to_string()),
-        Err(e) => return Err(format!("Failed to fetch current round: {}", e)),
+        Ok(None) => {
+            return Err("No current round found".to_string());
+        },
+        Err(e) => {
+            return Err(format!("Failed to fetch current round: {}", e));
+        },
     };
+
+
 
     // Check if trump has already been selected for this round
     if current_round.trump_suit.is_some() {
@@ -3163,8 +3386,12 @@ async fn perform_ai_trump_selection(
         .await
     {
         Ok(bids) => bids,
-        Err(e) => return Err(format!("Failed to fetch round bids: {}", e)),
+        Err(e) => {
+            return Err(format!("Failed to fetch round bids: {}", e));
+        },
     };
+
+
 
     // Find the highest bid and the player who bid first in case of ties
     let mut highest_bid = -1;
@@ -3185,10 +3412,14 @@ async fn perform_ai_trump_selection(
         }
     }
 
+
+
     // Validate that the current player is the designated trump chooser
     if player_id != trump_chooser_id.unwrap_or_default() {
         return Err("Only the highest bidder can choose the trump suit".to_string());
     }
+
+
 
     // Update the round with the trump suit
     let round_update = game_rounds::ActiveModel {
@@ -3203,7 +3434,9 @@ async fn perform_ai_trump_selection(
 
     match round_update.update(db).await {
         Ok(_) => (),
-        Err(e) => return Err(format!("Failed to update round with trump suit: {}", e)),
+        Err(e) => {
+            return Err(format!("Failed to update round with trump suit: {}", e));
+        },
     }
 
     // Transition the game to Playing phase
@@ -3220,8 +3453,11 @@ async fn perform_ai_trump_selection(
 
     match game_update.update(db).await {
         Ok(_) => (),
-        Err(e) => return Err(format!("Failed to transition game to playing phase: {}", e)),
+        Err(e) => {
+            return Err(format!("Failed to transition game to playing phase: {}", e));
+        },
     }
+
 
     Ok(())
 }
