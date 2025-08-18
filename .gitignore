@@ -1,5 +1,9 @@
 # .gitignore
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+**/*.tsbuildinfo
+
 ### Node / Frontend
 node_modules/
 .next/
