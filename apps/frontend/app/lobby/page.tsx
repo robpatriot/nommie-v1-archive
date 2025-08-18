@@ -152,9 +152,10 @@ export default function LobbyPage() {
   const deleteGame = async (gameId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent navigation to game page
     
-    if (!confirm('Are you sure you want to delete this game? This action cannot be undone.')) {
-      return;
-    }
+    // Temporarily disabled confirmation dialog during development
+    // if (!confirm('Are you sure you want to delete this game? This action cannot be undone.')) {
+    //   return;
+    // }
     
     setError(null);
     
