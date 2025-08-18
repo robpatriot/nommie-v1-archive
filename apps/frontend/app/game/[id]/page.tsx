@@ -76,6 +76,8 @@ export default function GamePage() {
   const [markingReady, setMarkingReady] = useState(false);
   const [addingAI, setAddingAI] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [submittingTrump, setSubmittingTrump] = useState(false);
+  const [selectedTrumpSuit, setSelectedTrumpSuit] = useState<string>('');
 
   const fetchGameData = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh) {
@@ -226,6 +228,44 @@ export default function GamePage() {
       setError(err instanceof Error ? err.message : 'Failed to add AI player');
     } finally {
       setAddingAI(false);
+    }
+  };
+
+  const handleSubmitTrump = async (trumpSuit: string) => {
+    setSubmittingTrump(true);
+    setError(null);
+    setSuccessMessage(null);
+    
+    try {
+      const session = await import('next-auth/react').then(m => m.getSession());
+      
+      if (!session?.accessToken) {
+        throw new Error('No access token available');
+      }
+      
+      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/trump`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ trump_suit: trumpSuit }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      setSuccessMessage(`Trump suit selected: ${trumpSuit}`);
+      
+      // Refresh game data to get updated state
+      await fetchGameData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit trump suit');
+    } finally {
+      setSubmittingTrump(false);
     }
   };
 
@@ -385,6 +425,92 @@ export default function GamePage() {
                   currentRound={gameSnapshot.current_round}
                   onBidSubmitted={fetchGameData}
                 />
+              </div>
+            )}
+
+            {/* Trump Selection UI */}
+            {gameSnapshot.game.phase === 'trump_selection' && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 mt-6">
+                <div className="flex items-center mb-4">
+                  <svg className="w-5 h-5 text-yellow-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-yellow-800 dark:text-yellow-200 font-medium">Trump Selection Phase</span>
+                </div>
+                
+                {gameSnapshot.current_round?.trump_suit ? (
+                  <div className="text-yellow-700 dark:text-yellow-300">
+                    <p className="font-medium">Trump suit has been selected: <span className="font-bold">{gameSnapshot.current_round.trump_suit}</span></p>
+                    <p className="text-sm mt-1">Waiting for the game to transition to playing phase...</p>
+                  </div>
+                ) : (
+                  <div>
+                    {(() => {
+                      // Check if current user is the trump chooser
+                      const currentUser = gameSnapshot.players.find(p => p.user.email === session?.user?.email);
+                      const isTrumpChooser = currentUser && gameSnapshot.trump_chooser_id === currentUser.id;
+                      
+                      if (isTrumpChooser) {
+                        return (
+                          <div>
+                            <p className="text-yellow-700 dark:text-yellow-300 mb-4">
+                              You are the highest bidder! Please select a trump suit for this round.
+                            </p>
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                {['Spades', 'Hearts', 'Diamonds', 'Clubs', 'NoTrump'].map((suit) => (
+                                  <button
+                                    key={suit}
+                                    onClick={() => setSelectedTrumpSuit(suit)}
+                                    className={`px-4 py-3 rounded-lg border-2 font-medium transition-colors ${
+                                      selectedTrumpSuit === suit
+                                        ? 'border-blue-500 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200'
+                                        : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
+                                    }`}
+                                  >
+                                    {suit === 'NoTrump' ? 'No Trump' : suit}
+                                  </button>
+                                ))}
+                              </div>
+                              {selectedTrumpSuit && (
+                                <div className="flex justify-center">
+                                  <button
+                                    onClick={() => handleSubmitTrump(selectedTrumpSuit)}
+                                    disabled={submittingTrump}
+                                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                                  >
+                                    {submittingTrump ? (
+                                      <div className="flex items-center">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                        Submitting...
+                                      </div>
+                                    ) : (
+                                      `Submit ${selectedTrumpSuit === 'NoTrump' ? 'No Trump' : selectedTrumpSuit}`
+                                    )}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="text-yellow-700 dark:text-yellow-300">
+                            <p>Waiting for another player to choose trump...</p>
+                            {gameSnapshot.trump_chooser_id && (
+                              <p className="text-sm mt-1">
+                                {(() => {
+                                  const trumpChooser = gameSnapshot.players.find(p => p.id === gameSnapshot.trump_chooser_id);
+                                  return trumpChooser ? `${trumpChooser.user.name || trumpChooser.user.email} is selecting trump...` : 'Highest bidder is selecting trump...';
+                                })()}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      }
+                    })()}
+                  </div>
+                )}
               </div>
             )}
 
@@ -549,7 +675,10 @@ export default function GamePage() {
                   <span className="text-green-800 dark:text-green-200 font-medium">Game in progress</span>
                 </div>
                 <p className="text-green-700 dark:text-green-300 mt-1">
-                  The game has started! Game interface will be implemented here.
+                  {gameSnapshot.game.phase === 'bidding' && 'Bidding phase - players are placing their bids.'}
+                  {gameSnapshot.game.phase === 'trump_selection' && 'Trump selection phase - highest bidder is choosing trump.'}
+                  {gameSnapshot.game.phase === 'playing' && 'Playing phase - cards are being played.'}
+                  {gameSnapshot.game.phase === 'scoring' && 'Scoring phase - calculating round scores.'}
                 </p>
                 {gameSnapshot.game.current_turn !== null && (
                   <div className="mt-3 p-3 bg-white dark:bg-gray-800 rounded-lg border">
