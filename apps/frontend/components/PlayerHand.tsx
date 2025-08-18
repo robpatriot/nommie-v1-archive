@@ -5,16 +5,12 @@ interface PlayerHandProps {
   className?: string;
 }
 
-export default function PlayerHand({ cards, className = "" }: PlayerHandProps) {
+export default function PlayerHand({ cards, className = '' }: PlayerHandProps) {
   if (!cards || cards.length === 0) {
     return (
       <div className={`bg-white dark:bg-gray-800 shadow rounded-lg p-6 ${className}`}>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-          Your Hand
-        </h3>
-        <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-          No cards in hand
-        </p>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Your Hand</h3>
+        <p className="text-gray-500 dark:text-gray-400 text-center py-8">No cards in hand</p>
       </div>
     );
   }
@@ -31,4 +27,4 @@ export default function PlayerHand({ cards, className = "" }: PlayerHandProps) {
       </div>
     </div>
   );
-} 
+}

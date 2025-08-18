@@ -15,14 +15,14 @@ export default function Home() {
   const fetchBackendData = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const response = await fetch(`${BACKEND_URL}/`);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.text();
       setData(result);
     } catch (err) {
@@ -47,7 +47,7 @@ export default function Home() {
               Your main application content goes here
             </p>
           </div>
-          
+
           {/* Lobby Navigation - Only show if authenticated */}
           {status === 'authenticated' && (
             <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6 border border-gray-200 dark:border-gray-700">
@@ -71,14 +71,14 @@ export default function Home() {
         {/* Backend Connection Test */}
         <div className="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-4 border border-gray-200 dark:border-gray-700 flex-1 max-w-sm">
           <h3 className="text-sm font-semibold mb-2 text-center">Backend Connection</h3>
-          
+
           {loading && (
             <div className="text-center">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mx-auto"></div>
               <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">Connecting...</p>
             </div>
           )}
-          
+
           {error && (
             <div className="text-center">
               <div className="text-red-600 dark:text-red-400 text-xs mb-1">❌ Error</div>
@@ -91,7 +91,7 @@ export default function Home() {
               </button>
             </div>
           )}
-          
+
           {data && !loading && !error && (
             <div className="text-center">
               <div className="text-green-600 dark:text-green-400 text-xs mb-1">✅ Connected</div>

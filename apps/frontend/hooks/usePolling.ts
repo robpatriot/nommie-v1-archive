@@ -14,7 +14,7 @@ interface UsePollingReturn {
 /**
  * A reusable hook for polling that calls a callback at regular intervals
  * while a condition is true.
- * 
+ *
  * @param options.enabled - Whether polling should be active
  * @param options.interval - Polling interval in milliseconds
  * @param options.callback - Function to call on each poll
@@ -84,4 +84,4 @@ export function usePolling({
   return {
     isPolling,
   };
-} 
+}

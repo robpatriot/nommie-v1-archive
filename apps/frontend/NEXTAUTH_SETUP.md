@@ -51,4 +51,4 @@ The authentication is now set up and ready to use. You can:
 - ✅ JWT strategy for session management
 - ✅ Secure token signing with AUTH_SECRET
 - ✅ TypeScript support with proper type extensions
-- ✅ Session provider wrapping the entire app 
+- ✅ Session provider wrapping the entire app

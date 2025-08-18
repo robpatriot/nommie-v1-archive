@@ -1,28 +1,28 @@
-import { NextAuthOptions } from "next-auth"
-import GoogleProvider from "next-auth/providers/google"
-import { SignJWT } from "jose"
+import { NextAuthOptions } from 'next-auth';
+import GoogleProvider from 'next-auth/providers/google';
+import { SignJWT } from 'jose';
 
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET)
-const TOKEN_LIFESPAN_SECONDS = 60 * 60 // 1 hour
+const secret = new TextEncoder().encode(process.env.AUTH_SECRET);
+const TOKEN_LIFESPAN_SECONDS = 60 * 60; // 1 hour
 
 async function signToken(userToken: Record<string, any>) {
-  const now = Math.floor(Date.now() / 1000)
-  const exp = now + TOKEN_LIFESPAN_SECONDS
-  
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + TOKEN_LIFESPAN_SECONDS;
+
   // Create a clean payload with only user claims
   // Let jose handle iat and exp automatically
   const payload = {
     sub: userToken.sub,
-    email: userToken.email
-  }
-  
+    email: userToken.email,
+  };
+
   const token = await new SignJWT(payload)
-    .setProtectedHeader({ alg: "HS256" })
+    .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
     .setExpirationTime(exp)
-    .sign(secret)
+    .sign(secret);
 
-  return token
+  return token;
 }
 
 export const authOptions: NextAuthOptions = {
@@ -33,7 +33,7 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   session: {
-    strategy: "jwt",
+    strategy: 'jwt',
   },
   jwt: {
     secret: process.env.AUTH_SECRET,
@@ -41,24 +41,24 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, account, user }) {
       if (account && user) {
-        token.sub = user.id
-        token.email = user.email
+        token.sub = user.id;
+        token.email = user.email;
       }
 
-      const now = Math.floor(Date.now() / 1000)
-      const createdAt = (token.accessTokenCreatedAt as number) ?? 0
-      const isExpired = now - createdAt > TOKEN_LIFESPAN_SECONDS
+      const now = Math.floor(Date.now() / 1000);
+      const createdAt = (token.accessTokenCreatedAt as number) ?? 0;
+      const isExpired = now - createdAt > TOKEN_LIFESPAN_SECONDS;
 
       if (!token.accessToken || isExpired) {
-        token.accessToken = await signToken(token)
-        token.accessTokenCreatedAt = now
+        token.accessToken = await signToken(token);
+        token.accessTokenCreatedAt = now;
       }
 
-      return token
+      return token;
     },
     async session({ session, token }) {
-      session.accessToken = token.accessToken
-      return session
-    }
-  }
-}
+      session.accessToken = token.accessToken;
+      return session;
+    },
+  },
+};
