@@ -854,11 +854,14 @@ pub async fn get_game_state(
                                 .one(&**db)
                                 .await
                             {
-                                matches!(round_bids::Entity::find()
-                                    .filter(round_bids::Column::RoundId.eq(current_round.id))
-                                    .filter(round_bids::Column::PlayerId.eq(current_player.id))
-                                    .one(&**db)
-                                    .await, Ok(Some(_)))
+                                matches!(
+                                    round_bids::Entity::find()
+                                        .filter(round_bids::Column::RoundId.eq(current_round.id))
+                                        .filter(round_bids::Column::PlayerId.eq(current_player.id))
+                                        .one(&**db)
+                                        .await,
+                                    Ok(Some(_))
+                                )
                             } else {
                                 false
                             }
@@ -890,11 +893,18 @@ pub async fn get_game_state(
                                     .one(&**db)
                                     .await
                                 {
-                                    matches!(trick_plays::Entity::find()
-                                        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
-                                        .filter(trick_plays::Column::PlayerId.eq(current_player.id))
-                                        .one(&**db)
-                                        .await, Ok(Some(_)))
+                                    matches!(
+                                        trick_plays::Entity::find()
+                                            .filter(
+                                                trick_plays::Column::TrickId.eq(current_trick.id)
+                                            )
+                                            .filter(
+                                                trick_plays::Column::PlayerId.eq(current_player.id)
+                                            )
+                                            .one(&**db)
+                                            .await,
+                                        Ok(Some(_))
+                                    )
                                 } else {
                                     false
                                 }
@@ -1050,9 +1060,9 @@ pub async fn get_game_state(
                                         )
                                         .await
                                         {
-                                                                                eprintln!(
-                                        "[ERROR] get_game_state: AI card play failed: {e}",
-                                    );
+                                            eprintln!(
+                                                "[ERROR] get_game_state: AI card play failed: {e}",
+                                            );
                                         }
                                     }
                                 }
@@ -2181,8 +2191,7 @@ pub async fn play_card(
     if play_order == 4 {
         // Determine the winner of the trick
         let winner_player_id =
-            match determine_trick_winner(&current_trick.id, &current_round.trump_suit, &db).await
-            {
+            match determine_trick_winner(&current_trick.id, &current_round.trump_suit, &db).await {
                 Ok(winner_id) => winner_id,
                 Err(e) => {
                     return Ok(HttpResponse::InternalServerError()
@@ -2411,7 +2420,8 @@ async fn determine_trick_winner(
         let is_lead_suit = suit == lead_suit;
 
         // Trump beats non-trump
-        if ((is_trump && !is_lead_suit) || (is_lead_suit && !is_trump_suit(&winning_play.card[1..2], trump_suit)))
+        if ((is_trump && !is_lead_suit)
+            || (is_lead_suit && !is_trump_suit(&winning_play.card[1..2], trump_suit)))
             && (!is_trump_suit(&winning_play.card[1..2], trump_suit) || card_rank > highest_rank)
         {
             winning_play = play;
@@ -2775,7 +2785,7 @@ mod tests {
         // For now, we'll just test that the function signature is correct
         let player_id = Uuid::new_v4();
         let game_id = Uuid::new_v4();
-        
+
         // This test is a placeholder - in a real environment you'd need a test database
         assert!(player_id != game_id); // Simple assertion to ensure the test compiles
     }
@@ -3138,15 +3148,11 @@ async fn perform_ai_bid(
     {
         Ok(Some(round)) => round,
         Ok(None) => {
-            println!(
-                "[ERROR] perform_ai_bid: No current round found for game: {game_id}",
-            );
+            println!("[ERROR] perform_ai_bid: No current round found for game: {game_id}",);
             return Err("No current round found".to_string());
         }
         Err(e) => {
-            println!(
-                "[ERROR] perform_ai_bid: Failed to fetch current round: {e}",
-            );
+            println!("[ERROR] perform_ai_bid: Failed to fetch current round: {e}",);
             return Err(format!("Failed to fetch current round: {e}"));
         }
     };
@@ -3161,9 +3167,7 @@ async fn perform_ai_bid(
         Ok(Some(_)) => true,
         Ok(None) => false,
         Err(e) => {
-            println!(
-                "[ERROR] perform_ai_bid: Failed to check existing bid: {e}",
-            );
+            println!("[ERROR] perform_ai_bid: Failed to check existing bid: {e}",);
             return Err(format!("Failed to check existing bid: {e}"));
         }
     };
@@ -3294,9 +3298,7 @@ async fn perform_ai_trump_selection(
     let trump_suit = &trump_request.trump_suit;
     let valid_suits = ["Spades", "Hearts", "Diamonds", "Clubs", "NoTrump"];
     if !valid_suits.contains(&trump_suit.as_str()) {
-        println!(
-            "[ERROR] perform_ai_trump_selection: Invalid trump suit: {trump_suit}",
-        );
+        println!("[ERROR] perform_ai_trump_selection: Invalid trump suit: {trump_suit}",);
         return Err(
             "Invalid trump suit. Must be one of: Spades, Hearts, Diamonds, Clubs, NoTrump"
                 .to_string(),
@@ -3649,7 +3651,7 @@ async fn perform_ai_card_play(
 
         match game_update.update(db).await {
             Ok(_) => (),
-                            Err(e) => return Err(format!("Failed to update turn order: {e}")),
+            Err(e) => return Err(format!("Failed to update turn order: {e}")),
         }
     }
 
