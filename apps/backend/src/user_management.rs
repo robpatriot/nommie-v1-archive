@@ -1,8 +1,10 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set};
-use uuid::Uuid;
-use chrono::Utc;
-use crate::entity::users::{Entity as Users, Model as User, ActiveModel as UserActiveModel, Column};
+use crate::entity::users::{
+    ActiveModel as UserActiveModel, Column, Entity as Users, Model as User,
+};
 use crate::jwt::Claims;
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use uuid::Uuid;
 
 pub async fn ensure_user_exists(
     db: &DatabaseConnection,
@@ -35,4 +37,4 @@ pub async fn ensure_user_exists(
             Ok(user)
         }
     }
-} 
+}

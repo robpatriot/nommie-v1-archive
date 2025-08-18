@@ -1,6 +1,6 @@
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, FixedOffset};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameSnapshot {
@@ -85,4 +85,4 @@ pub struct RoundScoreSnapshot {
     pub tricks_won: i32,
     pub bid: i32,
     pub points: i32,
-} 
+}

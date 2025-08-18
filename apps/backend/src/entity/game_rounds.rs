@@ -14,8 +14,6 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
 }
 
-
-
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
@@ -53,5 +51,3 @@ impl Related<super::round_bids::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
-
- 

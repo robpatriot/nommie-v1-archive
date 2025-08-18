@@ -1,9 +1,9 @@
+use actix_web::body::EitherBody;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header,
     Error, HttpMessage, HttpRequest, HttpResponse,
 };
-use actix_web::body::EitherBody;
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
@@ -14,10 +14,10 @@ use sea_orm::DatabaseConnection;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String, // Subject (user ID)
+    pub sub: String,   // Subject (user ID)
     pub email: String, // User email
-    pub exp: usize,  // Expiration time
-    pub iat: usize,  // Issued at
+    pub exp: usize,    // Expiration time
+    pub iat: usize,    // Issued at
 }
 
 #[derive(Clone)]
@@ -36,8 +36,6 @@ impl JwtAuth {
             "your-secret-key".to_string()
         })
     }
-
-
 
     fn verify_token(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
         let secret = Self::get_jwt_secret();
@@ -150,5 +148,7 @@ pub fn get_claims(req: &HttpRequest) -> Option<Claims> {
 
 // Helper function to extract user from request
 pub fn get_user(req: &HttpRequest) -> Option<crate::entity::users::Model> {
-    req.extensions().get::<crate::entity::users::Model>().cloned()
-} 
+    req.extensions()
+        .get::<crate::entity::users::Model>()
+        .cloned()
+}
