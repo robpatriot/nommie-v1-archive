@@ -7,5 +7,18 @@ cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check
 echo "[pre-commit] Running clippy (deny warnings)..."
 cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
-echo "[pre-commit] OK"
+# --- Frontend: format & lint staged files ---
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM || true)
+FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E '^apps/frontend/.*\.(ts|tsx|js|jsx|cjs|mjs|json|css|md)$' || true)
 
+if [ -n "${FRONTEND_FILES}" ]; then
+  echo "$FRONTEND_FILES" | xargs -r pnpm -C apps/frontend exec prettier --write --
+  # Re-stage files so the formatted result is what gets committed
+  echo "$FRONTEND_FILES" | xargs -r git add
+  # Optionally run ESLint after formatting
+  echo "$FRONTEND_FILES" | xargs -r pnpm -C apps/frontend exec eslint --max-warnings=0 --cache --
+else
+  echo "[pre-commit] No staged frontend files to format/lint."
+fi
+
+echo "[pre-commit] OK"
