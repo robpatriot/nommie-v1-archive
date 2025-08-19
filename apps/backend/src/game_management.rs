@@ -1,11 +1,11 @@
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result as ActixResult};
 use chrono::{DateTime, FixedOffset, Utc};
 
+use sea_orm::sea_query::{LockType, Query};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, Order,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
-use sea_orm::sea_query::{LockType, Query};
 use serde_json::json;
 use uuid::Uuid;
 
