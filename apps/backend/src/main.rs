@@ -101,27 +101,6 @@ async fn main() -> std::io::Result<()> {
     // Initialize tracing
     init_tracing();
 
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
-    // Initialize tracing
-    init_tracing();
-
     // Get database URL from environment
     let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
         warn!("Warning: DATABASE_URL not set, using default");
