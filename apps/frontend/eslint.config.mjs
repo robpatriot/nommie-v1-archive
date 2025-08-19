@@ -2,6 +2,7 @@
 import { FlatCompat } from '@eslint/eslintrc';
 import js from '@eslint/js';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
+import nextPlugin from '@next/eslint-plugin-next';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +14,7 @@ const compat = new FlatCompat({
   baseDirectory: __dirname,
 });
 
-export default [
+const config = [
   // 1) Ignore build artifacts
   {
     ignores: ['node_modules/**', '.next/**', 'out/**', 'dist/**', 'coverage/**', 'pnpm-lock.yaml'],
@@ -33,7 +34,10 @@ export default [
       sourceType: 'module',
     },
     // ensure plugin is available for rules below in flat config
-    plugins: { '@typescript-eslint': tsPlugin },
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      '@next/next': nextPlugin,
+    },
     settings: {
       // Helps Next plugin find your app in a monorepo
       next: { rootDir: ['apps/frontend/'] },
@@ -46,6 +50,9 @@ export default [
       ],
       '@typescript-eslint/consistent-type-imports': 'warn',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
+      '@next/next/no-html-link-for-pages': ['error', ['app']],
     },
   },
 ];
+
+export default config;
