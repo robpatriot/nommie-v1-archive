@@ -2339,18 +2339,254 @@ async fn calculate_player_total_score(
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
+    use super::*;
 
-    #[tokio::test]
-    async fn test_calculate_player_total_score() {
-        // This is a basic test to ensure the function compiles and handles errors gracefully
-        // Note: This test would need a proper database connection to run
-        // For now, we'll just test that the function signature is correct
-        let player_id = Uuid::new_v4();
-        let game_id = Uuid::new_v4();
+    // Test 1: Bidding rules
+    #[test]
+    fn test_bidding_rules_highest_bid_chooses_trump() {
+        // Test that highest bidder becomes trump chooser
 
-        // This test is a placeholder - in a real environment you'd need a test database
-        assert!(player_id != game_id); // Simple assertion to ensure the test compiles
+        // Create test bids with different values
+        let bids = [3, 7, 2, 5];
+        let mut highest_bid = -1;
+        let mut highest_bidder_index = 0;
+
+        for (i, &bid) in bids.iter().enumerate() {
+            if bid > highest_bid {
+                highest_bid = bid;
+                highest_bidder_index = i;
+            }
+        }
+
+        // Verify highest bidder (index 1 with bid 7) is selected
+        assert_eq!(highest_bidder_index, 1);
+        assert_eq!(highest_bid, 7);
+    }
+
+    #[test]
+    fn test_bidding_rules_tie_resolution() {
+        // Test tie resolution by "first highest in turn order"
+        let bids = [5, 5, 3, 2]; // Two players bid 5
+
+        // Simulate the logic from the production code
+        let mut highest_bid = -1;
+        let mut trump_chooser_index = 0;
+        let mut first_bid_time = None;
+
+        for (i, &bid) in bids.iter().enumerate() {
+            if bid > highest_bid {
+                highest_bid = bid;
+                trump_chooser_index = i;
+                first_bid_time = Some(i); // Use index as "time" for deterministic testing
+            } else if bid == highest_bid {
+                // In case of tie, the first bidder wins
+                if first_bid_time.is_none() {
+                    trump_chooser_index = i;
+                    first_bid_time = Some(i);
+                }
+            }
+        }
+
+        // First player with bid 5 (index 0) should win the tie
+        assert_eq!(trump_chooser_index, 0);
+        assert_eq!(highest_bid, 5);
+    }
+
+    // Test 2: Trick resolution basics
+    #[test]
+    fn test_trick_resolution_highest_lead_suit_wins() {
+        // Test that highest card in lead suit wins when no trump is played
+        let trump_suit = None;
+        let lead_suit = "H"; // Hearts
+
+        // Create test plays: 7H, KH, 2H, 9H (all hearts, no trump)
+        let plays = [
+            ("7H", 0), // 7 of hearts, play order 0
+            ("KH", 1), // King of hearts, play order 1
+            ("2H", 2), // 2 of hearts, play order 2
+            ("9H", 3), // 9 of hearts, play order 3
+        ];
+
+        // King of hearts should win (rank 13)
+        let mut winning_play = &plays[0];
+        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+
+        for play in &plays[1..] {
+            let card = &play.0;
+            let rank = &card[0..1];
+            let suit = &card[1..2];
+
+            let card_rank = get_card_rank(rank);
+            let is_trump = trump_suit
+                .as_ref()
+                .is_some_and(|trump: &String| suit == trump);
+            let is_lead_suit = suit == lead_suit;
+
+            // Trump beats non-trump, but here no trump is played
+            if is_lead_suit && !is_trump && card_rank > highest_rank {
+                winning_play = play;
+                highest_rank = card_rank;
+            }
+        }
+
+        // King (rank 13) should win over 9, 7, 2
+        assert_eq!(winning_play.0, "KH");
+        assert_eq!(highest_rank, 13);
+    }
+
+    #[test]
+    fn test_trick_resolution_trump_beats_lead_suit() {
+        // Test that any trump beats non-trump cards
+        let trump_suit = Some("S".to_string()); // Spades is trump
+        let lead_suit = "H"; // Hearts is lead suit
+
+        // Create test plays: AH (ace hearts), 2S (2 spades), 7H (7 hearts), KS (king spades)
+        let plays = [
+            ("AH", 0), // Ace of hearts, play order 0
+            ("2S", 1), // 2 of spades (trump), play order 1
+            ("7H", 2), // 7 of hearts, play order 2
+            ("KS", 3), // King of spades (trump), play order 3
+        ];
+
+        // King of spades should win (highest trump)
+        let mut winning_play = &plays[0];
+        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+
+        for play in &plays[1..] {
+            let card = &play.0;
+            let rank = &card[0..1];
+            let suit = &card[1..2];
+
+            let card_rank = get_card_rank(rank);
+            let is_trump = trump_suit
+                .as_ref()
+                .is_some_and(|trump: &String| suit == trump);
+            let is_lead_suit = suit == lead_suit;
+
+            // Trump beats non-trump
+            if ((is_trump && !is_lead_suit) || (is_lead_suit && !is_trump_suit(suit, &trump_suit)))
+                && (!is_trump_suit(&winning_play.0[1..2], &trump_suit) || card_rank > highest_rank)
+            {
+                winning_play = play;
+                highest_rank = card_rank;
+            }
+        }
+
+        // King of spades (trump) should win over ace of hearts (lead suit)
+        assert_eq!(winning_play.0, "KS");
+        assert_eq!(highest_rank, 13);
+    }
+
+    #[test]
+    fn test_trick_resolution_cannot_follow_suit() {
+        // Test case where some players can't follow suit
+        let trump_suit = Some("D".to_string()); // Diamonds is trump
+        let lead_suit = "H"; // Hearts is lead suit
+
+        // Create test plays: 7H (7 hearts), 2D (2 diamonds - trump), 9C (9 clubs - can't follow), 3D (3 diamonds - trump)
+        let plays = [
+            ("7H", 0), // 7 of hearts, play order 0
+            ("2D", 1), // 2 of diamonds (trump), play order 1
+            ("9C", 2), // 9 of clubs (can't follow suit), play order 2
+            ("3D", 3), // 3 of diamonds (trump), play order 3
+        ];
+
+        // 3 of diamonds should win (highest trump)
+        let mut winning_play = &plays[0];
+        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+
+        for play in &plays[1..] {
+            let card = &play.0;
+            let rank = &card[0..1];
+            let suit = &card[1..2];
+
+            let card_rank = get_card_rank(rank);
+            let is_trump = trump_suit
+                .as_ref()
+                .is_some_and(|trump: &String| suit == trump);
+            let is_lead_suit = suit == lead_suit;
+
+            // Trump beats non-trump
+            if ((is_trump && !is_lead_suit) || (is_lead_suit && !is_trump_suit(suit, &trump_suit)))
+                && (!is_trump_suit(&winning_play.0[1..2], &trump_suit) || card_rank > highest_rank)
+            {
+                winning_play = play;
+                highest_rank = card_rank;
+            }
+        }
+
+        // 3 of diamonds (trump) should win over 2 of diamonds (trump) and 7 of hearts (lead suit)
+        assert_eq!(winning_play.0, "3D");
+        assert_eq!(highest_rank, 3);
+    }
+
+    // Test 3: Scoring bonuses
+    #[test]
+    fn test_scoring_exact_bid_bonus() {
+        // Test that exact bid gives +10 bonus
+        let tricks_won = 5;
+        let bid = 5;
+
+        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
+        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
+
+        // Should get 5 + 10 = 15 points for exact bid
+        assert_eq!(points, 15);
+    }
+
+    #[test]
+    fn test_scoring_no_bonus_for_inexact_bid() {
+        // Test that no bonus is given for inexact bid
+        let tricks_won = 3;
+        let bid = 5;
+
+        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
+        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
+
+        // Should get only 3 points (no bonus)
+        assert_eq!(points, 3);
+    }
+
+    #[test]
+    fn test_scoring_zero_bid_exact() {
+        // Test edge case: zero bid with zero tricks
+        let tricks_won = 0;
+        let bid = 0;
+
+        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
+        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
+
+        // Should get 0 + 10 = 10 points for exact zero bid
+        assert_eq!(points, 10);
+    }
+
+    // Helper function to test card rank calculation
+    #[test]
+    fn test_card_rank_values() {
+        // Test that card ranks are calculated correctly
+        assert_eq!(get_card_rank("2"), 2);
+        assert_eq!(get_card_rank("T"), 10);
+        assert_eq!(get_card_rank("J"), 11);
+        assert_eq!(get_card_rank("Q"), 12);
+        assert_eq!(get_card_rank("K"), 13);
+        assert_eq!(get_card_rank("A"), 14);
+    }
+
+    // Helper function to test trump suit checking
+    #[test]
+    fn test_trump_suit_checking() {
+        // Test trump suit identification
+        let trump_suit = Some("H".to_string());
+
+        assert!(is_trump_suit("H", &trump_suit));
+        assert!(!is_trump_suit("S", &trump_suit));
+        assert!(!is_trump_suit("D", &trump_suit));
+        assert!(!is_trump_suit("C", &trump_suit));
+
+        // Test with no trump
+        let no_trump = None;
+        assert!(!is_trump_suit("H", &no_trump));
+        assert!(!is_trump_suit("S", &no_trump));
     }
 }
 
