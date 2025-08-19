@@ -4,6 +4,9 @@
 *.tsbuildinfo
 **/*.tsbuildinfo
 
+# ESLint cache
+**/.eslintcache
+
 ### Node / Frontend
 node_modules/
 .next/
