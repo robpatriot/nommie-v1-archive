@@ -5,8 +5,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, Order,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
-use sea_orm_migration::prelude::LockType;
-use sea_orm_migration::prelude::Query;
+use sea_orm::sea_query::{LockType, Query};
 use serde_json::json;
 use uuid::Uuid;
 
