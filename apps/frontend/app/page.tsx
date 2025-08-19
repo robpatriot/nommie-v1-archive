@@ -7,7 +7,7 @@ import { ProtectedApiTest } from '@/components/auth/ProtectedApiTest';
 import { BACKEND_URL } from '@/lib/config';
 
 export default function Home() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const [data, setData] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

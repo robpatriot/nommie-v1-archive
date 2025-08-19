@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { useSession, getSession } from 'next-auth/react';
 import { BACKEND_URL } from '@/lib/config';
 import { usePolling } from '@/hooks/usePolling';
 import PlayerHand from '@/components/PlayerHand';
@@ -17,13 +16,8 @@ interface PlayerSnapshot {
   is_ai: boolean;
   total_score: number;
   hand: string[] | null;
-  user: {
-    id: string;
-    email: string;
-    name: string | null;
-  };
+  user: { id: string; email: string; name: string | null };
 }
-
 interface GameInfo {
   id: string;
   state: string;
@@ -33,12 +27,10 @@ interface GameInfo {
   updated_at: string;
   started_at?: string;
 }
-
 interface RoundBidSnapshot {
   player_id: string;
   bid: number;
 }
-
 interface RoundSnapshot {
   id: string;
   round_number: number;
@@ -48,12 +40,11 @@ interface RoundSnapshot {
   cards_dealt: number;
   bids: RoundBidSnapshot[];
   current_bidder_turn: number | null;
-  current_trick: any | null;
-  completed_tricks: any[];
+  current_trick: unknown | null;
+  completed_tricks: unknown[];
   current_player_turn: string | null;
-  round_scores: any[];
+  round_scores: unknown[];
 }
-
 interface GameSnapshot {
   game: GameInfo;
   players: PlayerSnapshot[];
@@ -79,35 +70,35 @@ export default function GamePage() {
   const [submittingTrump, setSubmittingTrump] = useState(false);
   const [selectedTrumpSuit, setSelectedTrumpSuit] = useState<string>('');
 
+  const getAccessToken = useCallback(async () => {
+    const freshSession = await getSession();
+    return freshSession?.accessToken;
+  }, []);
+
   const fetchGameData = useCallback(
     async (isManualRefresh = false) => {
-      if (isManualRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (isManualRefresh) setRefreshing(true);
+      else setLoading(true);
       setError(null);
 
       try {
-        const session = await import('next-auth/react').then((m) => m.getSession());
+        const accessToken = await getAccessToken();
+        if (!accessToken) throw new Error('No access token available');
 
-        if (!session?.accessToken) {
-          throw new Error('No access token available');
-        }
-
-        const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/state`, {
+        const res = await fetch(`${BACKEND_URL}/api/game/${gameId}/state`, {
           headers: {
-            Authorization: `Bearer ${session.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
+            Accept: 'application/json',
           },
         });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
         }
 
-        const data: GameSnapshot = await response.json();
+        const data: GameSnapshot = await res.json();
         setGameSnapshot(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch game data');
@@ -116,73 +107,57 @@ export default function GamePage() {
         setRefreshing(false);
       }
     },
-    [gameId],
+    [gameId, getAccessToken],
   );
 
-  // Use the polling hook
   const { isPolling } = usePolling({
     enabled: status === 'authenticated' && !!gameId,
-    interval: 2500, // 2.5 seconds
+    interval: 2500,
     callback: fetchGameData,
     immediate: true,
   });
 
-  const handleManualRefresh = () => {
-    fetchGameData(true);
-  };
+  const handleManualRefresh = () => fetchGameData(true);
 
   const handleMarkReady = async () => {
     setMarkingReady(true);
     setError(null);
     setSuccessMessage(null);
-
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
-
-      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/ready`, {
+      const res = await fetch(`${BACKEND_URL}/api/game/${gameId}/ready`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
       }
 
-      const data = await response.json();
+      const data = await res.json();
 
       if (data.success) {
-        // Update local state immediately
         if (gameSnapshot) {
           setGameSnapshot({
             ...gameSnapshot,
-            players: gameSnapshot.players.map((player: PlayerSnapshot) =>
-              player.user.email === session.user?.email ? { ...player, is_ready: true } : player,
+            players: gameSnapshot.players.map((p) =>
+              p.user.email === session?.user?.email ? { ...p, is_ready: true } : p,
             ),
-            // Update game state if the game started
             game: data.game_started
-              ? {
-                  ...gameSnapshot.game,
-                  state: 'Started',
-                  started_at: new Date().toISOString(),
-                }
+              ? { ...gameSnapshot.game, state: 'Started', started_at: new Date().toISOString() }
               : gameSnapshot.game,
           });
         }
-
-        // Show success message
-        if (data.game_started) {
-          setSuccessMessage('Game started! All players are ready.');
-        } else {
-          setSuccessMessage('Marked as ready!');
-        }
+        setSuccessMessage(
+          data.game_started ? 'Game started! All players are ready.' : 'Marked as ready!',
+        );
       } else {
         throw new Error(data.message || 'Failed to mark as ready');
       }
@@ -197,32 +172,27 @@ export default function GamePage() {
     setAddingAI(true);
     setError(null);
     setSuccessMessage(null);
-
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
-
-      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/add_ai`, {
+      const res = await fetch(`${BACKEND_URL}/api/game/${gameId}/add_ai`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
       }
 
-      const data = await response.json();
-
+      const data = await res.json();
       if (data.success) {
         setSuccessMessage('AI player added successfully!');
-        // Refresh game data to show the new player
         fetchGameData(true);
       } else {
         throw new Error(data.message || 'Failed to add AI player');
@@ -238,32 +208,27 @@ export default function GamePage() {
     setSubmittingTrump(true);
     setError(null);
     setSuccessMessage(null);
-
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
-
-      const response = await fetch(`${BACKEND_URL}/api/game/${gameId}/trump`, {
+      const res = await fetch(`${BACKEND_URL}/api/game/${gameId}/trump`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
         body: JSON.stringify({ trump_suit: trumpSuit }),
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
       }
 
-      const data = await response.json();
+      await res.json();
       setSuccessMessage(`Trump suit selected: ${trumpSuit}`);
-
-      // Refresh game data to get updated state
       await fetchGameData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit trump suit');
@@ -284,10 +249,7 @@ export default function GamePage() {
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
     }
   };
-
-  const getGameStateText = (state: string) => {
-    return state.charAt(0).toUpperCase() + state.slice(1);
-  };
+  const getGameStateText = (state: string) => state.charAt(0).toUpperCase() + state.slice(1);
 
   if (status === 'loading') {
     return (
@@ -377,7 +339,12 @@ export default function GamePage() {
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
             <div className="flex items-center">
-              <svg className="w-5 h-5 text-red-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <svg
+                className="w-5 h-5 text-red-400 mr-2"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+              >
                 <path
                   fillRule="evenodd"
                   d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1-1z"
@@ -394,7 +361,12 @@ export default function GamePage() {
         {successMessage && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
             <div className="flex items-center">
-              <svg className="w-5 h-5 text-green-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <svg
+                className="w-5 h-5 text-green-400 mr-2"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+              >
                 <path
                   fillRule="evenodd"
                   d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
@@ -411,7 +383,7 @@ export default function GamePage() {
         {loading && !gameSnapshot && (
           <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
             <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-6 00 mx-auto"></div>
               <p className="mt-2 text-gray-600 dark:text-gray-400">Loading game data...</p>
             </div>
           </div>
@@ -420,14 +392,12 @@ export default function GamePage() {
         {/* Game Content */}
         {gameSnapshot && (
           <>
-            {/* Player Hand */}
             {currentPlayer?.hand && (
               <div className="mb-6">
                 <PlayerHand cards={currentPlayer.hand} />
               </div>
             )}
 
-            {/* Bidding Interface */}
             {gameSnapshot.game.phase === 'bidding' && gameSnapshot.current_round && (
               <div className="mb-6">
                 <BiddingInterface
@@ -439,7 +409,6 @@ export default function GamePage() {
               </div>
             )}
 
-            {/* Trump Selection UI */}
             {gameSnapshot.game.phase === 'trump_selection' && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 mt-6">
                 <div className="flex items-center mb-4">
@@ -447,6 +416,7 @@ export default function GamePage() {
                     className="w-5 h-5 text-yellow-400 mr-2"
                     fill="currentColor"
                     viewBox="0 0 20 20"
+                    aria-hidden="true"
                   >
                     <path
                       fillRule="evenodd"
@@ -472,7 +442,6 @@ export default function GamePage() {
                 ) : (
                   <div>
                     {(() => {
-                      // Check if current user is the trump chooser
                       const currentUser = gameSnapshot.players.find(
                         (p) => p.user.email === session?.user?.email,
                       );
@@ -554,16 +523,14 @@ export default function GamePage() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Players</h2>
 
-                {/* Ready Button */}
                 {gameSnapshot.game.state.toLowerCase() === 'waiting' && (
                   <div className="flex space-x-2">
                     <button
                       onClick={handleMarkReady}
                       disabled={
                         markingReady ||
-                        gameSnapshot.players.find(
-                          (p: PlayerSnapshot) => p.user.email === session?.user?.email,
-                        )?.is_ready
+                        gameSnapshot.players.find((p) => p.user.email === session?.user?.email)
+                          ?.is_ready === true
                       }
                       className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                     >
@@ -572,9 +539,8 @@ export default function GamePage() {
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                           Marking Ready...
                         </div>
-                      ) : gameSnapshot.players.find(
-                          (p: PlayerSnapshot) => p.user.email === session?.user?.email,
-                        )?.is_ready ? (
+                      ) : gameSnapshot.players.find((p) => p.user.email === session?.user?.email)
+                          ?.is_ready ? (
                         'Ready ✓'
                       ) : (
                         'Mark Ready'
@@ -619,7 +585,7 @@ export default function GamePage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {gameSnapshot.players.map((player: PlayerSnapshot) => {
+                  {gameSnapshot.players.map((player) => {
                     const isCurrentUser = player.user.email === session?.user?.email;
                     const isCurrentTurn =
                       gameSnapshot.game.current_turn !== null &&
@@ -645,11 +611,7 @@ export default function GamePage() {
                             }`}
                           >
                             <span
-                              className={`font-medium ${
-                                player.is_ai
-                                  ? 'text-purple-600 dark:text-purple-400'
-                                  : 'text-blue-600 dark:text-blue-400'
-                              }`}
+                              className={`font-medium ${player.is_ai ? 'text-purple-600 dark:text-purple-400' : 'text-blue-600 dark:text-blue-400'}`}
                             >
                               {player.is_ai
                                 ? '🤖'
@@ -658,9 +620,7 @@ export default function GamePage() {
                           </div>
                           <div>
                             <p
-                              className={`font-medium text-gray-900 dark:text-white ${
-                                isCurrentTurn ? 'font-bold' : ''
-                              }`}
+                              className={`font-medium text-gray-9 00 dark:text-white ${isCurrentTurn ? 'font-bold' : ''}`}
                             >
                               {player.user.name || player.user.email}
                               {isCurrentTurn && (
@@ -720,6 +680,7 @@ export default function GamePage() {
                     className="w-5 h-5 text-blue-400 mr-2"
                     fill="currentColor"
                     viewBox="0 0 20 20"
+                    aria-hidden="true"
                   >
                     <path
                       fillRule="evenodd"
@@ -744,6 +705,7 @@ export default function GamePage() {
                     className="w-5 h-5 text-green-400 mr-2"
                     fill="currentColor"
                     viewBox="0 0 20 20"
+                    aria-hidden="true"
                   >
                     <path
                       fillRule="evenodd"

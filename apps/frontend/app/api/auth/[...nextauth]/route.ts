@@ -1,6 +1,7 @@
 import NextAuth from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { config } from '@/lib/auth';
 
-const handler = NextAuth(authOptions);
+const { handlers } = NextAuth(config);
 
-export { handler as GET, handler as POST };
+// Only export HTTP methods from a route module
+export const { GET, POST } = handlers;

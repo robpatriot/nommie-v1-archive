@@ -33,10 +33,10 @@ interface RoundSnapshot {
   cards_dealt: number;
   bids: RoundBidSnapshot[];
   current_bidder_turn: number | null;
-  current_trick: any | null;
-  completed_tricks: any[];
+  current_trick: unknown | null;
+  completed_tricks: unknown[];
   current_player_turn: string | null;
-  round_scores: any[];
+  round_scores: unknown[];
 }
 
 interface BiddingInterfaceProps {

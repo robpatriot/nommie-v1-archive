@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession, getSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { CreateGameButton } from '@/components/game/CreateGameButton';
+import Link from 'next/link';
+
 import { BACKEND_URL } from '@/lib/config';
 import { usePolling } from '@/hooks/usePolling';
 
@@ -31,42 +32,45 @@ export default function LobbyPage() {
   const [joiningGame, setJoiningGame] = useState<string | null>(null);
   const [createGameLoading, setCreateGameLoading] = useState(false);
 
+  const getAccessToken = useCallback(async () => {
+    const fresh = await getSession();
+    return fresh?.accessToken;
+  }, []);
+
   const fetchGames = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
-
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
       const response = await fetch(`${BACKEND_URL}/api/games`, {
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
       }
 
       const data = await response.json();
-      setGames(data.games || data); // Handle both array and object with games property
+      setGames(data.games || data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch games');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessToken]);
 
-  // Use the polling hook
+  // Polling
   const { isPolling } = usePolling({
     enabled: status === 'authenticated',
-    interval: 5000, // 5 seconds
+    interval: 5000,
     callback: fetchGames,
     immediate: true,
   });
@@ -76,29 +80,26 @@ export default function LobbyPage() {
     setError(null);
 
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
-
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
       const response = await fetch(`${BACKEND_URL}/api/join_game?game_id=${gameId}`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
       }
 
       const data: JoinGameResponse = await response.json();
 
       if (data.success) {
-        // Redirect to the game page
         router.push(`/game/${gameId}`);
       } else {
         throw new Error(data.message || 'Failed to join game');
@@ -115,28 +116,24 @@ export default function LobbyPage() {
     setError(null);
 
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
-
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
       const response = await fetch(`${BACKEND_URL}/api/create_game`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
       }
 
       const data = await response.json();
-
-      // Redirect to the newly created game
       router.push(`/game/${data.game.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -150,43 +147,34 @@ export default function LobbyPage() {
   };
 
   const deleteGame = async (gameId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent navigation to game page
-
-    // Temporarily disabled confirmation dialog during development
-    // if (!confirm('Are you sure you want to delete this game? This action cannot be undone.')) {
-    //   return;
-    // }
-
+    e.stopPropagation();
     setError(null);
 
     try {
-      const session = await import('next-auth/react').then((m) => m.getSession());
-
-      if (!session?.accessToken) {
-        throw new Error('No access token available');
-      }
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('No access token available');
 
       const response = await fetch(`${BACKEND_URL}/api/game/${gameId}`, {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${session.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
       }
 
-      // Refresh the games list
       await fetchGames();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  // Show loading state
+  // Loading/auth guards
   if (status === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -198,7 +186,6 @@ export default function LobbyPage() {
     );
   }
 
-  // Show login prompt if not authenticated
   if (status === 'unauthenticated') {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -216,6 +203,8 @@ export default function LobbyPage() {
     );
   }
 
+  const tokenPresent = Boolean(session?.accessToken);
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-6xl mx-auto px-4 py-8">
@@ -223,12 +212,12 @@ export default function LobbyPage() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Game Lobby</h1>
-            <a
+            <Link
               href="/"
               className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium"
             >
               Back to Home
-            </a>
+            </Link>
           </div>
           <p className="text-gray-600 dark:text-gray-400">Welcome back, {session?.user?.email}</p>
         </div>
@@ -240,7 +229,8 @@ export default function LobbyPage() {
           </h2>
           <button
             onClick={createGameAndJoin}
-            disabled={createGameLoading}
+            disabled={createGameLoading || !tokenPresent}
+            title={!tokenPresent ? 'No access token available' : undefined}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           >
             {createGameLoading ? (
@@ -278,7 +268,12 @@ export default function LobbyPage() {
           {error && (
             <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-center">
-                <svg className="w-5 h-5 text-red-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <svg
+                  className="w-5 h-5 text-red-400 mr-2"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                  aria-hidden="true"
+                >
                   <path
                     fillRule="evenodd"
                     d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
@@ -367,7 +362,7 @@ export default function LobbyPage() {
                         )}
                         {game.is_player_in_game ? (
                           <span className="px-3 py-1 text-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full">
-                            You're in this game
+                            You&apos;re in this game
                           </span>
                         ) : canJoin ? (
                           <button
@@ -375,7 +370,8 @@ export default function LobbyPage() {
                               e.stopPropagation();
                               joinGame(game.id);
                             }}
-                            disabled={joiningGame === game.id}
+                            disabled={joiningGame === game.id || !tokenPresent}
+                            title={!tokenPresent ? 'No access token available' : undefined}
                             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
                           >
                             {joiningGame === game.id ? (
