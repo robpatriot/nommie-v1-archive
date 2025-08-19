@@ -5,7 +5,7 @@ echo "[pre-commit] Checking Rust formatting..."
 cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check
 
 echo "[pre-commit] Running clippy (deny warnings)..."
-cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targetS --all-features -- -D warnings
+cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
 # --- Collect staged files (added/copied/modified/renamed) ---
 STAGED_Z="$(git diff --cached -z --name-only --diff-filter=ACMR || true)"
