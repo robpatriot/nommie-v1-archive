@@ -7,34 +7,52 @@ cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check
 echo "[pre-commit] Running clippy (deny warnings)..."
 cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
-# --- Collect staged files (added/copied/modified/renamed) ---
-STAGED_Z="$(git diff --cached -z --name-only --diff-filter=ACMR || true)"
+# Arrays for files
+PRETTIER_ABS=()  # repo-relative
+ESLINT_ABS=()
+PRETTIER_REL=()  # app-relative (for -C apps/frontend)
+ESLINT_REL=()
 
-# --- Limit to frontend paths ---
-FRONTEND_Z="$(printf '%s' "$STAGED_Z" | grep -z -E '^apps/frontend/' || true)"
+# Collect staged files (added/copied/modified/renamed), NUL-delimited
+git diff --cached -z --name-only --diff-filter=ACMR | \
+while IFS= read -r -d '' path; do
+  # Only consider frontend files
+  case "$path" in
+    apps/frontend/*)
+      rel="${path#apps/frontend/}"
+      # Prettier set (broad, includes JSON)
+      case "$path" in
+        *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs|*.json|*.md|*.mdx|*.css|*.scss|*.yml|*.yaml|*.html)
+          PRETTIER_ABS+=("$path")
+          PRETTIER_REL+=("$rel")
+          ;;
+      esac
+      # ESLint set (code only)
+      case "$path" in
+        *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs)
+          ESLINT_ABS+=("$path")
+          ESLINT_REL+=("$rel")
+          ;;
+      esac
+      ;;
+    *) ;;
+  esac
+done
 
-# --- Split: Prettier (broad) vs ESLint (code only) ---
-PRETTIER_ABS_Z="$(printf '%s' "$FRONTEND_Z" | grep -z -E '\.(ts|tsx|js|jsx|cjs|mjs|json|md|mdx|css|scss|yml|yaml|html)$' || true)"
-ESLINT_ABS_Z="$(printf '%s' "$FRONTEND_Z" | grep -z -E '\.(ts|tsx|js|jsx|cjs|mjs)$' || true)"
-
-# Convert repo-relative -> app-relative for -C apps/frontend commands
-prettier_rel() { printf '%s' "$PRETTIER_ABS_Z" | sed -z -E 's#^apps/frontend/##'; }
-eslint_rel()   { printf '%s' "$ESLINT_ABS_Z"   | sed -z -E 's#^apps/frontend/##'; }
-
-# --- Run Prettier (also formats JSON like package.json) ---
-if [ -n "${PRETTIER_ABS_Z}" ]; then
+# Run Prettier
+if ((${#PRETTIER_REL[@]})); then
   echo "[pre-commit] Formatting staged frontend files with Prettier..."
-  prettier_rel | xargs -0 -r pnpm -C apps/frontend exec prettier --write --
-  # Re-stage formatted files using their repo-relative paths
-  printf '%s' "$PRETTIER_ABS_Z" | xargs -0 -r git add
+  pnpm -C apps/frontend exec prettier --write -- "${PRETTIER_REL[@]}"
+  # Re-stage formatted files using repo-relative paths
+  git add -- "${PRETTIER_ABS[@]}"
 else
   echo "[pre-commit] No frontend files to format."
 fi
 
-# --- Run ESLint (code only) ---
-if [ -n "${ESLINT_ABS_Z}" ]; then
+# Run ESLint
+if ((${#ESLINT_REL[@]})); then
   echo "[pre-commit] Linting staged frontend code with ESLint..."
-  eslint_rel | xargs -0 -r pnpm -C apps/frontend exec eslint --max-warnings=0 --cache --
+  pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
 else
   echo "[pre-commit] No frontend code files to lint."
 fi
