@@ -6,6 +6,9 @@ use dotenv::dotenv;
 use sea_orm::{Database, DatabaseConnection};
 use serde_json::json;
 use std::env;
+use tracing::{info, warn};
+use tracing_actix_web::TracingLogger;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod dto;
 mod entity;
@@ -22,6 +25,28 @@ use migration::Migrator;
 use migration::MigratorTrait;
 
 //extern crate sea_query;
+
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,actix_web=info,sea_orm=info"));
+
+    let is_production =
+        env::var("RUST_ENV").unwrap_or_else(|_| "development".to_string()) == "production";
+
+    if is_production {
+        // JSON formatter for production
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
+    } else {
+        // Pretty formatter for development
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .init();
+    }
+}
 
 #[get("/")]
 async fn hello() -> impl Responder {
@@ -73,34 +98,58 @@ async fn main() -> std::io::Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
 
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
+    // Initialize tracing
+    init_tracing();
+
     // Get database URL from environment
     let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
-        println!("Warning: DATABASE_URL not set, using default");
+        warn!("Warning: DATABASE_URL not set, using default");
         "postgres://nommie_user:pineconescamping@localhost:5432/nommie".to_string()
     });
 
-    println!("Starting Nommie backend server...");
-    println!("Database URL: {database_url}");
+    info!("Starting Nommie backend server...");
+    info!("Database URL: {}", database_url);
 
     // Connect to database
     let db: DatabaseConnection = Database::connect(&database_url)
         .await
         .expect("Failed to connect to database");
 
-    println!("Connected to database successfully!");
+    info!("Connected to database successfully!");
 
     // Run migrations
     Migrator::up(&db, None)
         .await
         .expect("Failed to run migrations");
 
-    println!("Database migrations completed successfully!");
+    info!("Database migrations completed successfully!");
 
     // Start the HTTP server
     HttpServer::new(move || {
         // Configure CORS
         let frontend_origin = env::var("CORS_ALLOWED_ORIGIN").unwrap_or_else(|_| {
-            println!("Warning: CORS_ALLOWED_ORIGIN not set, using default");
+            warn!("Warning: CORS_ALLOWED_ORIGIN not set, using default");
             "http://localhost:3000".to_string()
         });
 
@@ -114,6 +163,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(cors)
+            .wrap(TracingLogger::default())
             .app_data(web::Data::new(db.clone()))
             .service(hello)
             .service(
