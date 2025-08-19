@@ -1,22 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[pre-commit] Checking Rust formatting..."
-cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
 
-echo "[pre-commit] Running clippy (deny warnings)..."
+# --- stash unstaged changes so we only modify staged content ---
+git stash -q --keep-index
+restore_stash() {
+  if ! git stash pop -q; then
+    echo "[pre-commit] Could not auto-restore unstaged changes (conflicts)."
+    echo "             Your changes are preserved in the stash."
+    echo "             Run:  git stash list"
+    echo "                   git stash show -p stash@{0} | less"
+    echo "                   git stash apply --index stash@{0}"
+    echo "                   (resolve conflicts, git add -A)"
+    echo "                   git stash drop stash@{0}"
+  fi
+}
+trap restore_stash EXIT
+
+# ------------------ RUST (backend) ------------------
+echo "[pre-commit] Auto-formatting Rust (backend)…"
+# Write changes (NOT --check), only for backend workspace
+cargo fmt --manifest-path ./apps/backend/Cargo.toml
+
+# Re-stage any fmt changes under backend
+git add -A apps/backend
+
+echo "[pre-commit] Running clippy (deny warnings)…"
 cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
+# ------------------ FRONTEND (unchanged) ------------------
 # Arrays for files
 PRETTIER_ABS=()  # repo-relative
 ESLINT_ABS=()
 PRETTIER_REL=()  # app-relative (for -C apps/frontend)
 ESLINT_REL=()
 
-# Collect staged files (added/copied/modified/renamed), NUL-delimited
-git diff --cached -z --name-only --diff-filter=ACMR | \
+# NOTE: avoid subshell so arrays persist (use process substitution instead of a pipe)
 while IFS= read -r -d '' path; do
-  # Only consider frontend files
   case "$path" in
     apps/frontend/*)
       rel="${path#apps/frontend/}"
@@ -37,7 +59,7 @@ while IFS= read -r -d '' path; do
       ;;
     *) ;;
   esac
-done
+done < <(git diff --cached -z --name-only --diff-filter=ACMR)
 
 # Run Prettier
 if ((${#PRETTIER_REL[@]})); then
