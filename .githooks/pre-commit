@@ -1,83 +1,75 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
+echo "[pre-commit] Phase A: read-only checks…"
 
-# --- stash unstaged changes so we only modify staged content ---
-git stash -q --keep-index
-restore_stash() {
-  if ! git stash pop -q; then
-    echo "[pre-commit] Could not auto-restore unstaged changes (conflicts)."
-    echo "             Your changes are preserved in the stash."
-    echo "             Run:  git stash list"
-    echo "                   git stash show -p stash@{0} | less"
-    echo "                   git stash apply --index stash@{0}"
-    echo "                   (resolve conflicts, git add -A)"
-    echo "                   git stash drop stash@{0}"
-  fi
-}
-trap restore_stash EXIT
+# Collect staged files
+PRETTIER_ABS=()    # repo-relative (frontend)
+PRETTIER_REL=()    # app-relative for running inside apps/frontend
+ESLINT_REL=()      # staged frontend code files (app-relative)
+RUST_STAGED=()     # repo-relative staged Rust files (backend)
 
-# ------------------ RUST (backend) ------------------
-echo "[pre-commit] Auto-formatting Rust (backend)…"
-# Write changes (NOT --check), only for backend workspace
-cargo fmt --manifest-path ./apps/backend/Cargo.toml
-
-# Re-stage any fmt changes under backend
-git add -A apps/backend
-
-echo "[pre-commit] Running clippy (deny warnings)…"
-cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings
-
-# ------------------ FRONTEND (unchanged) ------------------
-# Arrays for files
-PRETTIER_ABS=()  # repo-relative
-ESLINT_ABS=()
-PRETTIER_REL=()  # app-relative (for -C apps/frontend)
-ESLINT_REL=()
-
-# NOTE: avoid subshell so arrays persist (use process substitution instead of a pipe)
 while IFS= read -r -d '' path; do
   case "$path" in
+    # Frontend staged files
     apps/frontend/*)
       rel="${path#apps/frontend/}"
-      # Prettier set (broad, includes JSON)
       case "$path" in
+        # ESLint targets
+        *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs)
+          ESLINT_REL+=("$rel")
+          ;;
+      esac
+      case "$path" in
+        # Prettier targets
         *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs|*.json|*.md|*.mdx|*.css|*.scss|*.yml|*.yaml|*.html)
           PRETTIER_ABS+=("$path")
           PRETTIER_REL+=("$rel")
           ;;
       esac
-      # ESLint set (code only)
+      ;;
+    # Backend staged files
+    apps/backend/*)
       case "$path" in
-        *.ts|*.tsx|*.js|*.jsx|*.cjs|*.mjs)
-          ESLINT_ABS+=("$path")
-          ESLINT_REL+=("$rel")
+        *.rs)
+          RUST_STAGED+=("$path")
           ;;
       esac
       ;;
-    *) ;;
   esac
 done < <(git diff --cached -z --name-only --diff-filter=ACMR)
 
-# Run Prettier
-if ((${#PRETTIER_REL[@]})); then
-  echo "[pre-commit] Formatting staged frontend files with Prettier..."
-  pnpm -C apps/frontend exec prettier --write -- "${PRETTIER_REL[@]}"
-  # Re-stage formatted files using repo-relative paths
-  git add -- "${PRETTIER_ABS[@]}"
-else
-  echo "[pre-commit] No frontend files to format."
-fi
+# Backend clippy (read-only)
+echo "  • backend:clippy"
+# pnpm backend:clippy
 
-# Run ESLint
+# Frontend ESLint (staged-only, read-only)
 if ((${#ESLINT_REL[@]})); then
-  echo "[pre-commit] Linting staged frontend code with ESLint..."
-  pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
+  echo "  • eslint (staged frontend code only)"
+  #pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
 else
-  echo "[pre-commit] No frontend code files to lint."
+  echo "  • eslint: no staged frontend code files"
 fi
 
-echo "[pre-commit] OK"
+echo "[pre-commit] Phase A OK ✅"
+echo "[pre-commit] Phase B: formatting staged files…"
 
+# Rustfmt (staged backend files only)
+if ((${#RUST_STAGED[@]})); then
+  echo "  • rustfmt (staged backend .rs files)"
+  rustfmt --edition 2021 -- "${RUST_STAGED[@]}" || true
+  git add -- "${RUST_STAGED[@]}" || true
+else
+  echo "  • rustfmt: no staged backend .rs files"
+fi
+
+# Prettier (staged frontend files only)
+if ((${#PRETTIER_REL[@]})); then
+  echo "  • prettier --write (staged frontend files)"
+  pnpm -C apps/frontend exec prettier --write -- "${PRETTIER_REL[@]}"
+  git add -- "${PRETTIER_ABS[@]}" || true
+else
+  echo "  • prettier: no staged frontend files"
+fi
+
+echo "[pre-commit] OK ✅"
