@@ -39,14 +39,14 @@ while IFS= read -r -d '' path; do
   esac
 done < <(git diff --cached -z --name-only --diff-filter=ACMR)
 
-# Backend clippy (read-only)
+# Backend clippy (read-only) via package script
 echo "  • backend:clippy"
 pnpm backend:clippy
 
-# Frontend ESLint (staged-only, read-only)
+# Frontend ESLint (staged-only, read-only) via package script + arg passthrough
 if ((${#ESLINT_REL[@]})); then
   echo "  • eslint (staged frontend code only)"
-  pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
+  pnpm frontend:lint -- "${ESLINT_REL[@]}"
 else
   echo "  • eslint: no staged frontend code files"
 fi
@@ -54,7 +54,7 @@ fi
 echo "[pre-commit] Phase A OK ✅"
 echo "[pre-commit] Phase B: formatting staged files…"
 
-# Rustfmt (staged backend files only)
+# Rustfmt (staged backend files only) — keep staged-only for speed
 if ((${#RUST_STAGED[@]})); then
   echo "  • rustfmt (staged backend .rs files)"
   rustfmt --edition 2021 -- "${RUST_STAGED[@]}" || true
@@ -63,13 +63,14 @@ else
   echo "  • rustfmt: no staged backend .rs files"
 fi
 
-# Prettier (staged frontend files only)
+# Prettier (staged frontend files only) via package script + arg passthrough
 if ((${#PRETTIER_REL[@]})); then
   echo "  • prettier --write (staged frontend files)"
-  pnpm -C apps/frontend exec prettier --write -- "${PRETTIER_REL[@]}"
+  pnpm frontend:fmt -- "${PRETTIER_REL[@]}"
   git add -- "${PRETTIER_ABS[@]}" || true
 else
   echo "  • prettier: no staged frontend files"
 fi
 
 echo "[pre-commit] OK ✅"
+
