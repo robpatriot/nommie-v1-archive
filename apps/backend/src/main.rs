@@ -34,7 +34,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .wrap(TracingLogger::default())
             .app_data(web::Data::new(db.clone()))
-            .configure(|cfg| configure_routes(cfg, web::Data::new(db.clone())))
+            .configure(configure_routes)
     })
     .bind(("127.0.0.1", 8080))?
     .run()

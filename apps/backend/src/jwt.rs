@@ -2,7 +2,7 @@ use actix_web::body::EitherBody;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header,
-    Error, HttpMessage, HttpRequest, HttpResponse,
+    web, Error, HttpMessage, HttpRequest, HttpResponse,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -21,13 +21,17 @@ pub struct Claims {
 }
 
 #[derive(Clone)]
-pub struct JwtAuth {
-    db: DatabaseConnection,
+pub struct JwtAuth;
+
+impl Default for JwtAuth {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl JwtAuth {
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+    pub fn new() -> Self {
+        Self
     }
 
     fn get_jwt_secret() -> String {
@@ -63,14 +67,12 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(JwtAuthMiddleware {
             service: Rc::new(service),
-            db: self.db.clone(),
         }))
     }
 }
 
 pub struct JwtAuthMiddleware<S> {
     service: Rc<S>,
-    db: DatabaseConnection,
 }
 
 impl<S, B> Service<ServiceRequest> for JwtAuthMiddleware<S>
@@ -88,7 +90,6 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let svc = self.service.clone();
 
-        let db = self.db.clone();
         Box::pin(async move {
             // Extract the Authorization header
             let auth_header = req
@@ -102,6 +103,20 @@ where
                     // Verify the JWT token
                     match JwtAuth::verify_token(token) {
                         Ok(claims) => {
+                            // Get database connection from request data
+                            let db = match req.app_data::<web::Data<DatabaseConnection>>() {
+                                Some(db) => db.get_ref().clone(),
+                                None => {
+                                    let (req, _pl) = req.into_parts();
+                                    let resp = HttpResponse::InternalServerError()
+                                        .content_type("application/json")
+                                        .json(serde_json::json!({"error": "Database connection not available"}));
+                                    return Ok(
+                                        ServiceResponse::new(req, resp).map_into_right_body()
+                                    );
+                                }
+                            };
+
                             // Ensure user exists in database
                             match crate::user_management::ensure_user_exists(&db, &claims).await {
                                 Ok(user) => {

@@ -9,7 +9,6 @@ pub mod user_management;
 pub use bootstrap::{connect_and_migrate_from_env, init_tracing, load_dotenv};
 
 use actix_web::web;
-use sea_orm::DatabaseConnection;
 
 use game_management::{
     add_ai_player, create_game, delete_game, get_game_state, get_game_summary, get_games,
@@ -18,13 +17,10 @@ use game_management::{
 use jwt::{get_claims, get_user, JwtAuth};
 
 /// Configure all routes for the application
-pub fn configure_routes(
-    cfg: &mut actix_web::web::ServiceConfig,
-    db: web::Data<DatabaseConnection>,
-) {
+pub fn configure_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(hello).service(
         web::scope("/api")
-            .wrap(JwtAuth::new(db.get_ref().clone()))
+            .wrap(JwtAuth::new())
             .service(protected_route)
             .service(create_game)
             .service(get_games)
