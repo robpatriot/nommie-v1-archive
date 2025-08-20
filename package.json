@@ -35,6 +35,9 @@
 
     "frontend:typecheck": "pnpm -C apps/frontend exec tsc -p tsconfig.json --noEmit",
 
+    "logs:clean": "rm -f ${LOG_DIR:-logs}/*.log",
+    "logs:tail": "tail -f ${LOG_DIR:-logs}/*.log || echo 'No logs yet (run tests first)'",
+
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
