@@ -9,8 +9,10 @@
     "dev:stop": "pkill -f concurrently",
     "dev:backend": "cd apps/backend && cargo watch -x run",
     "dev:frontend": "cd apps/frontend && pnpm dev",
+
     "build": "pnpm --recursive run build",
     "test": "pnpm --recursive run test",
+
     "db:start": "docker compose up -d postgres",
     "db:stop": "docker compose down",
     "db:restart": "docker compose restart postgres",
@@ -20,10 +22,18 @@
     "backend:fmt": "cargo fmt --manifest-path ./apps/backend/Cargo.toml",
     "backend:fmt:check": "cargo fmt --manifest-path ./apps/backend/Cargo.toml -- --check",
     "backend:clippy": "cargo clippy --manifest-path ./apps/backend/Cargo.toml --all-targets --all-features -- -D warnings",
-    "frontend:lint": "pnpm -C apps/frontend exec eslint --max-warnings=0 .",
-    "frontend:fmt:check": "pnpm -C apps/frontend exec prettier --check .",
-    "frontend:fmt": "pnpm -C apps/frontend exec prettier --write .",
+
+    "frontend:lint": "pnpm -C apps/frontend exec eslint --max-warnings=0",
+    "frontend:lint:all": "pnpm run frontend:lint -- .",
+
+    "frontend:fmt": "pnpm -C apps/frontend exec prettier --write",
+    "frontend:fmt:all": "pnpm run frontend:fmt -- .",
+
+    "frontend:fmt:check": "pnpm -C apps/frontend exec prettier --check",
+    "frontend:fmt:check:all": "pnpm run frontend:fmt:check -- .",
+
     "frontend:typecheck": "pnpm -C apps/frontend exec tsc -p tsconfig.json --noEmit",
+
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
