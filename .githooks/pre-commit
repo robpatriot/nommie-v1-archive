@@ -41,12 +41,12 @@ done < <(git diff --cached -z --name-only --diff-filter=ACMR)
 
 # Backend clippy (read-only)
 echo "  • backend:clippy"
-# pnpm backend:clippy
+pnpm backend:clippy
 
 # Frontend ESLint (staged-only, read-only)
 if ((${#ESLINT_REL[@]})); then
   echo "  • eslint (staged frontend code only)"
-  #pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
+  pnpm -C apps/frontend exec eslint --max-warnings=0 --cache -- "${ESLINT_REL[@]}"
 else
   echo "  • eslint: no staged frontend code files"
 fi
