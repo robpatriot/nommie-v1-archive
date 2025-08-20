@@ -1,4 +1,5 @@
-use backend::test_support::common::{test_bootstrap, test_issue_token};
+use backend::jwt::issue_test_token;
+use backend::test_support::common::test_bootstrap;
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, Set};
 use uuid::Uuid;
@@ -30,7 +31,7 @@ async fn smoke_workflow() -> anyhow::Result<()> {
     let user = user.insert(&db).await?;
 
     // 2) Mint JWT
-    let token = test_issue_token(&user.external_id, &user.email, 3600);
+    let token = issue_test_token(&user.external_id, &user.email, 3600);
     let auth = format!("Bearer {token}");
 
     // 3) Create game
