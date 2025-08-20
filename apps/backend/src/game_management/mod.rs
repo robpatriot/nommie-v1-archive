@@ -8,6 +8,14 @@ pub mod scoring;
 pub mod state;
 pub mod tricks;
 
+// Re-export commonly used rules constants and functions
+pub use rules::{
+    calculate_cards_dealt, canonical_player_index, get_card_rank_value, get_dealer_index_for_round,
+    get_next_dealer_index, get_next_player_index, get_previous_player_index, is_trump_suit,
+    is_valid_card_format, turn_order_from_index, MAX_CARDS_PER_ROUND, MIN_CARDS_PER_ROUND,
+    PLAYER_COUNT, TOTAL_ROUNDS,
+};
+
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result as ActixResult};
 use chrono::{DateTime, FixedOffset, Utc};
 
@@ -49,7 +57,7 @@ async fn check_and_start_game(game: games::Model, db: &DatabaseConnection) -> Re
     };
 
     // Only proceed if exactly 4 players are in the game
-    if players.len() == 4 {
+    if players.len() == PLAYER_COUNT {
         // Check if all players are ready
         let all_ready = players.iter().all(|game_player| game_player.is_ready);
 
@@ -74,14 +82,14 @@ async fn check_and_start_game(game: games::Model, db: &DatabaseConnection) -> Re
                         round_number: Set(1),
                         dealer_player_id: Set(None), // Will be set later
                         trump_suit: Set(None),
-                        cards_dealt: Set(13), // First round deals 13 cards
+                        cards_dealt: Set(MAX_CARDS_PER_ROUND), // First round deals 13 cards
                         created_at: Set(now),
                     };
 
                     match first_round.insert(db).await {
                         Ok(_) => {
                             // Deal cards to players for the first round
-                            match deal_cards_to_players(&round_id, 13, db).await {
+                            match deal_cards_to_players(&round_id, MAX_CARDS_PER_ROUND, db).await {
                                 Ok(_) => Ok(true),
                                 Err(e) => Err(format!("Failed to deal cards: {e}")),
                             }
@@ -1938,23 +1946,6 @@ pub async fn play_card(
     }
 }
 
-// Helper function to validate card format
-fn is_valid_card_format(card: &str) -> bool {
-    if card.len() != 2 {
-        return false;
-    }
-
-    let rank = &card[0..1];
-    let suit = &card[1..2];
-
-    let valid_ranks = [
-        "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A",
-    ];
-    let valid_suits = ["S", "H", "D", "C"];
-
-    valid_ranks.contains(&rank) && valid_suits.contains(&suit)
-}
-
 // Helper function to determine trick winner
 async fn determine_trick_winner(
     trick_id: &Uuid,
@@ -1981,14 +1972,14 @@ async fn determine_trick_winner(
     let lead_suit = &lead_card[1..2];
 
     let mut winning_play = &plays[0];
-    let mut highest_rank = get_card_rank(&lead_card[0..1]);
+    let mut highest_rank = get_card_rank_value(&lead_card[0..1]);
 
     for play in &plays[1..] {
         let card = &play.card;
         let rank = &card[0..1];
         let suit = &card[1..2];
 
-        let card_rank = get_card_rank(rank);
+        let card_rank = get_card_rank_value(rank);
         let is_trump = trump_suit.as_ref().is_some_and(|trump| suit == trump);
         let is_lead_suit = suit == lead_suit;
 
@@ -2005,50 +1996,11 @@ async fn determine_trick_winner(
     Ok(winning_play.player_id)
 }
 
-// Helper function to get card rank value
-fn get_card_rank(rank: &str) -> i32 {
-    match rank {
-        "2" => 2,
-        "3" => 3,
-        "4" => 4,
-        "5" => 5,
-        "6" => 6,
-        "7" => 7,
-        "8" => 8,
-        "9" => 9,
-        "T" => 10,
-        "J" => 11,
-        "Q" => 12,
-        "K" => 13,
-        "A" => 14,
-        _ => 0,
-    }
-}
-
-// Helper function to check if a suit is trump
-fn is_trump_suit(suit: &str, trump_suit: &Option<String>) -> bool {
-    trump_suit.as_ref().is_some_and(|trump| suit == trump)
-}
-
-/// Calculate the number of cards to deal for a given round number
-fn calculate_cards_dealt(round_number: i32) -> i32 {
-    if round_number <= 11 {
-        // Rounds 1-11: 13 cards down to 3 cards
-        14 - round_number
-    } else if round_number <= 15 {
-        // Rounds 12-15: 4 rounds of 2 cards
-        2
-    } else {
-        // Rounds 16-26: 3 cards up to 13 cards
-        round_number - 12
-    }
-}
-
 /// Create a standard 52-card deck and shuffle it
 fn create_shuffled_deck() -> Vec<String> {
     let suits = vec!["H", "D", "C", "S"]; // Hearts, Diamonds, Clubs, Spades
     let ranks = vec![
-        "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
+        "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A",
     ];
 
     let mut deck = Vec::new();
@@ -2093,7 +2045,7 @@ async fn deal_cards_to_players(
 
     // Calculate total cards needed
     let total_cards_needed = cards_dealt * players.len() as i32;
-    if total_cards_needed > 52 {
+    if total_cards_needed > PLAYER_COUNT as i32 * MAX_CARDS_PER_ROUND {
         return Err("Not enough cards in deck".to_string());
     }
 
@@ -2202,7 +2154,7 @@ async fn create_next_round(game_id: &Uuid, db: &DatabaseConnection) -> Result<()
     let next_round_number = current_round.round_number + 1;
 
     // Check if game is complete (26 rounds)
-    if next_round_number > 26 {
+    if next_round_number > TOTAL_ROUNDS {
         // Mark game as completed
         let game = match games::Entity::find_by_id(*game_id).one(db).await {
             Ok(Some(game)) => game,
@@ -2243,7 +2195,7 @@ async fn create_next_round(game_id: &Uuid, db: &DatabaseConnection) -> Result<()
             .iter()
             .position(|p| p.id == current_dealer)
             .unwrap_or(0);
-        let next_dealer_index = (current_dealer_index + 1) % players.len();
+        let next_dealer_index = (current_dealer_index + 1) % PLAYER_COUNT;
         Some(players[next_dealer_index].id)
     } else {
         // If no current dealer, start with the first player
@@ -2419,14 +2371,14 @@ mod tests {
 
         // King of hearts should win (rank 13)
         let mut winning_play = &plays[0];
-        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+        let mut highest_rank = get_card_rank_value(&plays[0].0[0..1]);
 
         for play in &plays[1..] {
             let card = &play.0;
             let rank = &card[0..1];
             let suit = &card[1..2];
 
-            let card_rank = get_card_rank(rank);
+            let card_rank = get_card_rank_value(rank);
             let is_trump = trump_suit
                 .as_ref()
                 .is_some_and(|trump: &String| suit == trump);
@@ -2460,14 +2412,14 @@ mod tests {
 
         // King of spades should win (highest trump)
         let mut winning_play = &plays[0];
-        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+        let mut highest_rank = get_card_rank_value(&plays[0].0[0..1]);
 
         for play in &plays[1..] {
             let card = &play.0;
             let rank = &card[0..1];
             let suit = &card[1..2];
 
-            let card_rank = get_card_rank(rank);
+            let card_rank = get_card_rank_value(rank);
             let is_trump = trump_suit
                 .as_ref()
                 .is_some_and(|trump: &String| suit == trump);
@@ -2503,14 +2455,14 @@ mod tests {
 
         // 3 of diamonds should win (highest trump)
         let mut winning_play = &plays[0];
-        let mut highest_rank = get_card_rank(&plays[0].0[0..1]);
+        let mut highest_rank = get_card_rank_value(&plays[0].0[0..1]);
 
         for play in &plays[1..] {
             let card = &play.0;
             let rank = &card[0..1];
             let suit = &card[1..2];
 
-            let card_rank = get_card_rank(rank);
+            let card_rank = get_card_rank_value(rank);
             let is_trump = trump_suit
                 .as_ref()
                 .is_some_and(|trump: &String| suit == trump);
@@ -2574,12 +2526,12 @@ mod tests {
     #[test]
     fn test_card_rank_values() {
         // Test that card ranks are calculated correctly
-        assert_eq!(get_card_rank("2"), 2);
-        assert_eq!(get_card_rank("T"), 10);
-        assert_eq!(get_card_rank("J"), 11);
-        assert_eq!(get_card_rank("Q"), 12);
-        assert_eq!(get_card_rank("K"), 13);
-        assert_eq!(get_card_rank("A"), 14);
+        assert_eq!(get_card_rank_value("2"), 2);
+        assert_eq!(get_card_rank_value("T"), 10);
+        assert_eq!(get_card_rank_value("J"), 11);
+        assert_eq!(get_card_rank_value("Q"), 12);
+        assert_eq!(get_card_rank_value("K"), 13);
+        assert_eq!(get_card_rank_value("A"), 14);
     }
 
     // Helper function to test trump suit checking
@@ -3803,7 +3755,7 @@ async fn play_card_transaction(
         let mut highest_value = -1;
 
         for play in &trick_plays {
-            let card_value = get_card_value(&play.card);
+            let card_value = get_card_rank_value(&play.card[0..1]);
             if card_value > highest_value {
                 highest_value = card_value;
                 winning_player_id = Some(play.player_id);
@@ -3883,7 +3835,7 @@ async fn play_card_transaction(
         }
     } else {
         // Move to next player's turn
-        let next_turn = (current_turn + 1) % 4;
+        let next_turn = (current_turn + 1) % PLAYER_COUNT as i32;
 
         let game_update = games::ActiveModel {
             id: Set(game.id),
@@ -3905,24 +3857,4 @@ async fn play_card_transaction(
     }
 
     Ok(())
-}
-
-/// Helper function to get card value for trick comparison
-fn get_card_value(card: &str) -> i32 {
-    match card {
-        "A" => 14,
-        "K" => 13,
-        "Q" => 12,
-        "J" => 11,
-        "10" => 10,
-        "9" => 9,
-        "8" => 8,
-        "7" => 7,
-        "6" => 6,
-        "5" => 5,
-        "4" => 4,
-        "3" => 3,
-        "2" => 2,
-        _ => 0,
-    }
 }
