@@ -8,6 +8,7 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 static INIT: Once = Once::new();
+static ENSURE_TEST_DB_ONCE: Once = Once::new();
 static DB_CONNECTION: OnceCell<DatabaseConnection> = OnceCell::const_new();
 
 pub fn init_tracing_for_tests() {
@@ -39,11 +40,28 @@ fn load_dotenv() {
 }
 
 fn ensure_test_db() {
-    let url = env::var("DATABASE_URL").expect("DATABASE_URL is required for tests");
-    assert!(
-        url.contains("_test"),
-        "Refusing to run unless DATABASE_URL points to a *_test database. Current: {url}"
-    );
+    ENSURE_TEST_DB_ONCE.call_once(|| {
+        let url = env::var("DATABASE_URL").expect("DATABASE_URL is required for tests");
+
+        // Parse the database name from the last path segment before "?"
+        let db_name = if let Some(query_pos) = url.find('?') {
+            &url[..query_pos]
+        } else {
+            &url
+        };
+
+        let db_name = if let Some(last_slash) = db_name.rfind('/') {
+            &db_name[last_slash + 1..]
+        } else {
+            db_name
+        };
+
+        assert!(
+            db_name.ends_with("_test"),
+            "Refusing to run unless DATABASE_URL points to a *_test database. Current: {}",
+            redact_db_url(&url)
+        );
+    });
 }
 
 async fn connect_and_migrate_from_env() -> DatabaseConnection {
