@@ -18,4 +18,6 @@ version = "1"
 features = [
   "runtime-actix-native-tls",
   "sqlx-postgres",
+  "with-uuid",
+  "with-chrono",
 ]
