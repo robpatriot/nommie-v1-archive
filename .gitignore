@@ -1,7 +1,7 @@
 # .gitignore
 
 # Logs (keep folder, ignore contents)
-logs/
+logs/*
 !logs/.gitkeep
 
 # TypeScript incremental build cache
