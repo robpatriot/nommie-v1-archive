@@ -1,3 +1,13 @@
+//! Game management module
+//!
+//! This module contains the core game logic for the Nommie card game.
+
+pub mod bidding;
+pub mod rules;
+pub mod scoring;
+pub mod state;
+pub mod tricks;
+
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result as ActixResult};
 use chrono::{DateTime, FixedOffset, Utc};
 
