@@ -1,24 +1,24 @@
-use migration::Migrator;
-use migration::MigratorTrait;
-use sea_orm::{Database, DatabaseConnection};
 use std::env;
 use std::sync::OnceLock;
+
+use migration::{Migrator, MigratorTrait};
+use sea_orm::{Database, DatabaseConnection};
 use tokio::sync::OnceCell;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 static DOTENV_INIT: OnceLock<()> = OnceLock::new();
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 static DB_CONNECTION: OnceCell<DatabaseConnection> = OnceCell::const_new();
 
-/// Load environment variables from .env file exactly once
+/// Load environment variables from .env file exactly once (safe to call anywhere)
 pub fn load_dotenv() {
     DOTENV_INIT.get_or_init(|| {
-        dotenv::dotenv().ok();
+        let _ = dotenv::dotenv();
     });
 }
 
-/// Initialize tracing exactly once
+/// Initialize tracing exactly once (safe to call anywhere)
 pub fn init_tracing() {
     TRACING_INIT.get_or_init(|| {
         let filter = EnvFilter::try_from_default_env()
@@ -28,13 +28,11 @@ pub fn init_tracing() {
             env::var("RUST_ENV").unwrap_or_else(|_| "development".to_string()) == "production";
 
         if is_production {
-            // JSON formatter for production
             tracing_subscriber::registry()
                 .with(filter)
                 .with(tracing_subscriber::fmt::layer().json())
                 .init();
         } else {
-            // Pretty formatter for development
             tracing_subscriber::registry()
                 .with(filter)
                 .with(tracing_subscriber::fmt::layer().pretty())
@@ -43,30 +41,26 @@ pub fn init_tracing() {
     });
 }
 
-/// Connect to database and run migrations exactly once, return a cheap clone thereafter
+/// Connect to database and run migrations exactly once; returns a cheap clone thereafter.
 pub async fn connect_and_migrate_from_env() -> DatabaseConnection {
+    // Ensure env is loaded even if caller forgot.
+    load_dotenv();
+
     DB_CONNECTION
         .get_or_init(|| async {
-            // Get database URL from environment
-            let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
-                warn!("Warning: DATABASE_URL not set, using default");
-                "postgres://nommie_user:pineconescamping@localhost:5432/nommie".to_string()
-            });
+            let database_url =
+                env::var("DATABASE_URL").expect("DATABASE_URL must be set before starting backend");
 
-            info!("Starting Nommie backend server...");
-            info!("Database URL: {}", database_url);
+            info!("Starting Nommie backend server…");
+            info!("Database URL: {}", redact_db_url(&database_url));
 
-            // Connect to database
             let db: DatabaseConnection = Database::connect(&database_url)
                 .await
-                .expect("Failed to connect to database");
+                .expect("DB connect failed");
 
             info!("Connected to database successfully!");
 
-            // Run migrations
-            Migrator::up(&db, None)
-                .await
-                .expect("Failed to run migrations");
+            Migrator::up(&db, None).await.expect("Migrator::up failed");
 
             info!("Database migrations completed successfully!");
 
@@ -74,4 +68,40 @@ pub async fn connect_and_migrate_from_env() -> DatabaseConnection {
         })
         .await
         .clone()
+}
+
+/// Helper to log a DB URL without credentials.
+fn redact_db_url(url: &str) -> String {
+    if let Some(at_pos) = url.rfind('@') {
+        if let Some(colon_pos) = url[..at_pos].rfind(':') {
+            if url[..colon_pos].contains("//") {
+                let mut s = String::with_capacity(url.len());
+                s.push_str(&url[..(colon_pos + 1)]);
+                s.push_str("***");
+                s.push_str(&url[at_pos..]);
+                return s;
+            }
+        }
+    }
+    url.to_string()
+}
+
+#[cfg(test)]
+fn ensure_test_db() {
+    static TEST_DB_GUARD: OnceLock<()> = OnceLock::new();
+    TEST_DB_GUARD.get_or_init(|| {
+        let url = env::var("DATABASE_URL").expect("DATABASE_URL is required for tests");
+        assert!(
+            url.contains("_test"),
+            "Refusing to run unless DATABASE_URL points to a *_test database. Current: {url}"
+        );
+    });
+}
+
+#[cfg(test)]
+pub async fn test_bootstrap() -> DatabaseConnection {
+    load_dotenv();
+    ensure_test_db();
+    init_tracing();
+    connect_and_migrate_from_env().await
 }
