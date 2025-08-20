@@ -76,10 +76,53 @@ To tear it down:
 docker compose down
 ```
 
-### 🧪 Run tests (TODO)
+## Local DB & Tests
+
+### Environment
+Copy `.env.example` → `.env` and adjust values if needed.  
+- `POSTGRES_USER` / `POSTGRES_PASSWORD`: superuser that Docker entrypoint uses.  
+- `APP_DB_USER` / `APP_DB_PASSWORD`: application role (created automatically).  
+- `POSTGRES_DB`: base name (defaults to `nommie`). Tests will use `${POSTGRES_DB}_test`.
+
+### Start / Stop / Reset Postgres
+pnpm db:start     # start postgres container
+pnpm db:stop      # stop postgres container
+pnpm db:logs      # view logs during init
+pnpm db:reset     # ⚠ drop volume and re-init (dev + test DBs)
+
+## Running Tests (Unit + Integration)
+
+Run both sets of tests with one command:
 
 ```bash
-# Placeholder
+pnpm test:int
+```
+
+What it does:
+- Starts Postgres if needed (same as `pnpm db:start`)
+- Waits until the DB is ready
+- Exports a safe `DATABASE_URL` that targets `${POSTGRES_DB}_test` and uses the `APP_DB_*` credentials from `.env`
+- Runs backend unit tests (pure, no DB) then integration tests (migrations run automatically via the test bootstrap)
+
+Fresh, clean test DB (drop and recreate only the `*_test` database):
+```bash
+RECREATE_TEST_DB=1 pnpm test:int
+```
+
+Safety guard:
+- Integration tests refuse to run unless `DATABASE_URL` contains `"_test"`.
+- If you see "Refusing to run unless DATABASE_URL points to a *_test database.", fix your env or let `pnpm test:int` set it for you.
+
+Common pitfalls:
+- "password authentication failed for user 'nommie'" → You connected as `POSTGRES_USER` instead of `APP_DB_USER`. Ensure `.env` has `APP_DB_USER` / `APP_DB_PASSWORD` and re-run `pnpm test:int`.
+- Container not ready → `pnpm db:logs` to watch `init.sh`.
+
+Lint/format helpers:
+```bash
+pnpm backend:clippy
+pnpm backend:fmt
+pnpm frontend:lint -- .
+pnpm frontend:fmt -- .
 ```
 
 ---
