@@ -85,23 +85,3 @@ fn redact_db_url(url: &str) -> String {
     }
     url.to_string()
 }
-
-#[cfg(test)]
-fn ensure_test_db() {
-    static TEST_DB_GUARD: OnceLock<()> = OnceLock::new();
-    TEST_DB_GUARD.get_or_init(|| {
-        let url = env::var("DATABASE_URL").expect("DATABASE_URL is required for tests");
-        assert!(
-            url.contains("_test"),
-            "Refusing to run unless DATABASE_URL points to a *_test database. Current: {url}"
-        );
-    });
-}
-
-#[cfg(test)]
-pub async fn test_bootstrap() -> DatabaseConnection {
-    load_dotenv();
-    ensure_test_db();
-    init_tracing();
-    connect_and_migrate_from_env().await
-}

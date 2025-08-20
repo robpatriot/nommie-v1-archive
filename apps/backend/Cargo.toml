@@ -24,3 +24,6 @@ log = "0.4"
 
 [dependencies.migration]
 path = "migration"
+
+[dev-dependencies]
+anyhow = "1"
