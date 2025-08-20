@@ -1,6 +1,4 @@
-use crate::jwt::Claims;
 use dotenv;
-use jsonwebtoken::{encode, EncodingKey, Header};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
 use std::env;
@@ -25,33 +23,7 @@ pub fn init_tracing_for_tests() {
 
 /// Test-only JWT helper that issues a signed JWT using the same secret/algorithm/claims as production
 pub fn test_issue_token(sub: &str, email: &str, ttl_seconds: i64) -> String {
-    let now = chrono::Utc::now();
-    let iat = now.timestamp() as usize;
-    let exp = (now.timestamp() + ttl_seconds) as usize;
-
-    let claims = Claims {
-        sub: sub.to_string(),
-        email: email.to_string(),
-        iat,
-        exp,
-    };
-
-    let secret = get_jwt_secret();
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_ref()),
-    )
-    .expect("Failed to encode JWT token for test");
-
-    token
-}
-
-fn get_jwt_secret() -> String {
-    env::var("AUTH_SECRET").unwrap_or_else(|_| {
-        eprintln!("Warning: AUTH_SECRET not set, using default secret");
-        "your-secret-key".to_string()
-    })
+    crate::jwt::issue_test_token(sub, email, ttl_seconds)
 }
 
 /// Test bootstrap that loads .env, ensures *_test database, inits tracing, connects+migrates once

@@ -5,10 +5,11 @@ use actix_web::{
     web, Error, HttpMessage, HttpRequest, HttpResponse,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use sea_orm::DatabaseConnection;
 
@@ -18,6 +19,81 @@ pub struct Claims {
     pub email: String, // User email
     pub exp: usize,    // Expiration time
     pub iat: usize,    // Issued at
+}
+
+pub struct JwtConfig {
+    pub alg: Algorithm,
+    pub secret: String,
+    pub issuer: Option<String>,
+    pub audience: Option<String>,
+    pub default_ttl_secs: i64,
+    pub enc_key: EncodingKey,
+    pub dec_key: DecodingKey,
+}
+
+static JWT_CFG: OnceLock<JwtConfig> = OnceLock::new();
+
+fn get_jwt_config() -> &'static JwtConfig {
+    JWT_CFG.get_or_init(|| {
+        let secret = env::var("JWT_SECRET")
+            .or_else(|_| env::var("AUTH_SECRET"))
+            .expect("JWT_SECRET or AUTH_SECRET must be set");
+
+        let issuer = env::var("JWT_ISSUER").ok();
+        let audience = env::var("JWT_AUDIENCE").ok();
+        let default_ttl_secs = env::var("JWT_TTL_SECS")
+            .unwrap_or_else(|_| "3600".to_string())
+            .parse()
+            .expect("JWT_TTL_SECS must be a valid integer");
+
+        let alg = Algorithm::HS256;
+        let enc_key = EncodingKey::from_secret(secret.as_ref());
+        let dec_key = DecodingKey::from_secret(secret.as_ref());
+
+        JwtConfig {
+            alg,
+            secret,
+            issuer,
+            audience,
+            default_ttl_secs,
+            enc_key,
+            dec_key,
+        }
+    })
+}
+
+/// Issue a JWT token with custom TTL
+pub fn issue_token_with_ttl(sub: &str, email: &str, ttl_secs: i64) -> anyhow::Result<String> {
+    let now = chrono::Utc::now().timestamp() as usize;
+    let exp = (now as i64 + ttl_secs) as usize;
+
+    let claims = Claims {
+        sub: sub.to_string(),
+        email: email.to_string(),
+        iat: now,
+        exp,
+    };
+
+    // Note: To support issuer/audience in claims, we'd need to extend the Claims struct
+    // For now, keeping the existing Claims structure for backward compatibility
+
+    issue_token(&claims)
+}
+
+/// Issue a JWT token from claims
+pub fn issue_token(claims: &Claims) -> anyhow::Result<String> {
+    let cfg = get_jwt_config();
+    let header = Header::new(cfg.alg);
+
+    let token = encode(&header, claims, &cfg.enc_key)
+        .map_err(|e| anyhow::anyhow!("Failed to encode JWT token: {}", e))?;
+
+    Ok(token)
+}
+
+/// Test-only helper that issues a token without error handling
+pub fn issue_test_token(sub: &str, email: &str, ttl_secs: i64) -> String {
+    issue_token_with_ttl(sub, email, ttl_secs).expect("failed to issue test token")
 }
 
 #[derive(Clone)]
@@ -34,20 +110,19 @@ impl JwtAuth {
         Self
     }
 
-    fn get_jwt_secret() -> String {
-        env::var("AUTH_SECRET").unwrap_or_else(|_| {
-            eprintln!("Warning: AUTH_SECRET not set, using default secret");
-            "your-secret-key".to_string()
-        })
-    }
-
     fn verify_token(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
-        let secret = Self::get_jwt_secret();
-        let result = decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(secret.as_ref()),
-            &Validation::default(),
-        );
+        let cfg = get_jwt_config();
+        let mut validation = Validation::new(cfg.alg);
+
+        // Set issuer and audience validation if configured
+        if let Some(ref issuer) = cfg.issuer {
+            validation.iss = Some(std::collections::HashSet::from([issuer.clone()]));
+        }
+        if let Some(ref audience) = cfg.audience {
+            validation.aud = Some(std::collections::HashSet::from([audience.clone()]));
+        }
+
+        let result = decode::<Claims>(token, &cfg.dec_key, &validation);
         result.map(|token_data| token_data.claims)
     }
 }
