@@ -1,4 +1,3 @@
-use dotenv;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
 use std::env;
@@ -24,19 +23,15 @@ pub fn init_tracing_for_tests() {
 
 /// Test-only JWT helper that issues a signed JWT using the same secret/algorithm/claims as production
 pub fn test_issue_token(sub: &str, email: &str, ttl_seconds: i64) -> String {
-    crate::jwt::issue_test_token(sub, email, ttl_seconds)
+    backend::jwt::issue_test_token(sub, email, ttl_seconds)
 }
 
 /// Test bootstrap that loads .env, ensures *_test database, inits tracing, connects+migrates once
 pub async fn test_bootstrap() -> DatabaseConnection {
-    load_dotenv();
+    let _ = dotenv::dotenv();
     ensure_test_db();
     init_tracing_for_tests();
     connect_and_migrate_from_env().await
-}
-
-fn load_dotenv() {
-    let _ = dotenv::dotenv();
 }
 
 fn ensure_test_db() {

@@ -3,7 +3,6 @@ pub mod dto;
 pub mod entity;
 pub mod game_management;
 pub mod jwt;
-pub mod test_support;
 pub mod user_management;
 
 pub use bootstrap::{connect_and_migrate_from_env, init_tracing, load_dotenv};
