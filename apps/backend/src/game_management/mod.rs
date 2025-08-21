@@ -1,16 +1,12 @@
-//! Game management module
-//!
-//! HTTP handlers live in routes::game; this module keeps orchestration/cross-cutting helpers.
-//!
-//! This module contains the core game logic for the Nommie card game.
+//! Game management: thin orchestration + cross-cutting helpers.
+//! Domain logic lives in `rules`, `bidding`, `tricks`, `scoring`, `state`.
+//! HTTP handlers are defined in `routes::game` and wired via configure_routes.
 
 pub mod bidding;
 pub mod rules;
 pub mod scoring;
 pub mod state;
 pub mod tricks;
-
-// Re-export commonly used rules constants and functions
 
 use uuid::Uuid;
 
@@ -46,6 +42,5 @@ pub(crate) async fn play_card_transaction(
 
 #[cfg(test)]
 mod tests {
-
     // Bidding tests have been moved to bidding.rs
 }
