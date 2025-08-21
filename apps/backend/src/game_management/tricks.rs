@@ -5,13 +5,92 @@
 //! in-memory domain types and std.
 
 use crate::game_management::rules::get_card_rank_value;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
-};
 use uuid::Uuid;
 
-use crate::entity::{game_players, game_rounds, games, round_hands, round_tricks, trick_plays};
+// Pure domain types for trick logic
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct TrickState {
+    plays: Vec<(String, Uuid)>, // (card, player_id) tuples
+}
+
+/// Result of pure trick advancement logic
+///
+/// This type contains all the information needed to advance a trick
+/// after a card play, without any database dependencies.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct TrickAdvancement {
+    /// Whether the trick is complete (all players have played)
+    pub trick_complete: bool,
+    /// The winner of the trick (if complete)
+    pub winner_user_id: Option<Uuid>,
+    /// The next player to lead (if trick complete)
+    pub next_leader_user_id: Option<Uuid>,
+    /// Whether the round is complete and should advance to scoring
+    pub round_complete: bool,
+    /// The next turn index for the game
+    pub next_turn: i32,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct ApplyPlayOutcome {
+    card_to_remove: String,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum ApplyPlayError {
+    InvalidCardFormat,
+    CardNotInHand,
+    FollowSuitViolation,
+}
+
+/// Apply a single play to the current trick state (pure logic, no DB I/O)
+///
+/// This function is PURE - it applies a card play to the current trick state
+/// without any side effects or database operations. It validates the play
+/// against game rules and returns the card that should be removed from the player's hand.
+///
+/// # Arguments
+/// * `card` - The card being played
+/// * `current_trick` - The current state of the trick
+/// * `player_hand` - The player's current hand
+///
+/// # Returns
+/// * `Ok(ApplyPlayOutcome)` - The card to remove from hand
+/// * `Err(ApplyPlayError)` - Validation error if the play is invalid
+#[allow(dead_code)]
+pub(crate) fn apply_play_logic(
+    card: &str,
+    current_trick: &TrickState,
+    player_hand: &[String],
+) -> Result<ApplyPlayOutcome, ApplyPlayError> {
+    // Validate card format
+    if card.len() < 2 {
+        return Err(ApplyPlayError::InvalidCardFormat);
+    }
+
+    // Check if card is in hand
+    if !player_hand.contains(&card.to_string()) {
+        return Err(ApplyPlayError::CardNotInHand);
+    }
+
+    // Validate follow-suit rule if this isn't the first play
+    if !current_trick.plays.is_empty() {
+        let lead_suit = get_lead_suit_from_trick(&current_trick.plays).unwrap();
+        let card_suit = &card[1..2];
+
+        if card_suit != lead_suit && can_follow_suit(player_hand, &lead_suit) {
+            return Err(ApplyPlayError::FollowSuitViolation);
+        }
+    }
+
+    Ok(ApplyPlayOutcome {
+        card_to_remove: card.to_string(),
+    })
+}
 
 /// Determine the winner of a trick based on card plays and trump suit
 ///
@@ -124,7 +203,7 @@ pub fn is_trick_complete(play_count: usize, player_count: usize) -> bool {
 ///
 /// This function is PURE - it extracts the suit from a card string.
 /// Returns the lead suit as a string, or None if the card format is invalid.
-pub fn get_lead_suit_from_trick(plays: &[(String, uuid::Uuid)]) -> Option<String> {
+pub fn get_lead_suit_from_trick(plays: &[(String, Uuid)]) -> Option<String> {
     if let Some((first_card, _)) = plays.first() {
         if first_card.len() >= 2 {
             Some(first_card[1..2].to_string())
@@ -133,6 +212,76 @@ pub fn get_lead_suit_from_trick(plays: &[(String, uuid::Uuid)]) -> Option<String
         }
     } else {
         None
+    }
+}
+
+/// Determine trick advancement after a card play (pure logic, no DB I/O)
+///
+/// This function is PURE - it determines all advancement outcomes based on
+/// the current trick state, without any side effects or database operations.
+/// It reuses existing pure helpers to determine winners, completion status,
+/// and next player turns.
+///
+/// # Arguments
+/// * `trick_plays` - The current plays in the trick (card, player_id) tuples
+/// * `player_count` - Total number of players in the game
+/// * `current_turn` - Current turn index in the game
+/// * `trick_number` - Current trick number in the round
+/// * `cards_per_player` - Number of cards dealt per player this round
+/// * `trump_suit` - The trump suit for this round (if any)
+///
+/// # Returns
+/// * `TrickAdvancement` - Complete advancement information for the caller to persist
+pub(crate) fn advance_trick_logic(
+    trick_plays: &[(String, Uuid)],
+    player_count: usize,
+    current_turn: i32,
+    trick_number: i32,
+    cards_per_player: i32,
+    trump_suit: &Option<String>,
+) -> TrickAdvancement {
+    let trick_complete = is_trick_complete(trick_plays.len(), player_count);
+
+    if trick_complete {
+        // Determine the winner of the trick
+        let winner_user_id = determine_trick_winner(trick_plays, trump_suit).ok();
+
+        // Check if this was the last trick of the round
+        let total_tricks = cards_per_player;
+        let round_complete = trick_number == total_tricks;
+
+        if round_complete {
+            // Round is complete, next turn will be 0 (first player)
+            TrickAdvancement {
+                trick_complete: true,
+                winner_user_id,
+                next_leader_user_id: None, // Not relevant for round completion
+                round_complete: true,
+                next_turn: 0,
+            }
+        } else {
+            // Move to next player's turn (the winner of the trick)
+            // Note: We need to find the winner's turn order, but this function is pure
+            // so we'll return the winner's ID and let the caller handle the mapping
+            TrickAdvancement {
+                trick_complete: true,
+                winner_user_id,
+                next_leader_user_id: winner_user_id,
+                round_complete: false,
+                next_turn: -1, // Caller needs to map winner_user_id to turn order
+            }
+        }
+    } else {
+        // Move to next player's turn
+        let next_turn = get_next_trick_turn(current_turn);
+
+        TrickAdvancement {
+            trick_complete: false,
+            winner_user_id: None,
+            next_leader_user_id: None,
+            round_complete: false,
+            next_turn,
+        }
     }
 }
 
@@ -163,496 +312,6 @@ pub fn validate_follow_suit_rule(card: &str, lead_suit: &str, player_hand: &[Str
 
     // If player has lead suit cards, they must follow suit
     !has_lead_suit
-}
-
-/// Validate a card play for a specific player
-///
-/// This function validates that a play is legal according to game rules:
-/// - Player must own the card
-/// - Must follow suit if possible
-/// - Must be player's turn
-/// - Game must be in playing phase
-pub(crate) async fn validate_play(
-    game_id: Uuid,
-    user_id: Uuid,
-    card: &str,
-    txn: &DatabaseTransaction,
-) -> Result<(), String> {
-    // Lock the game row for update to prevent concurrent modifications
-    let game = match games::Entity::find_by_id(game_id)
-        .lock(sea_orm::sea_query::LockType::Update)
-        .one(txn)
-        .await
-    {
-        Ok(Some(game)) => game,
-        Ok(None) => {
-            return Err("Game not found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch game: {e}"));
-        }
-    };
-
-    // Validate that the game is in the Playing phase
-    if game.phase != games::GamePhase::Playing {
-        return Err("Game is not in playing phase".to_string());
-    }
-
-    // Fetch the current player's game_player record
-    let current_player = match game_players::Entity::find()
-        .filter(game_players::Column::GameId.eq(game_id))
-        .filter(game_players::Column::UserId.eq(user_id))
-        .one(txn)
-        .await
-    {
-        Ok(Some(player)) => player,
-        Ok(None) => {
-            return Err("You are not a participant in this game".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch player data: {e}"));
-        }
-    };
-
-    // Check if it's this player's turn to play
-    let current_turn = game.current_turn.unwrap_or(0);
-    if current_player.turn_order.unwrap_or(-1) != current_turn {
-        return Err("It's not your turn to play".to_string());
-    }
-
-    // Lock the current round row for update
-    let current_round = match game_rounds::Entity::find()
-        .filter(game_rounds::Column::GameId.eq(game_id))
-        .order_by_desc(game_rounds::Column::RoundNumber)
-        .lock(sea_orm::sea_query::LockType::Update)
-        .one(txn)
-        .await
-    {
-        Ok(Some(round)) => round,
-        Ok(None) => {
-            return Err("No current round found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current round: {e}"));
-        }
-    };
-
-    // Check if the player has the card in their hand
-    let player_hand = match round_hands::Entity::find()
-        .filter(round_hands::Column::RoundId.eq(current_round.id))
-        .filter(round_hands::Column::PlayerId.eq(current_player.id))
-        .all(txn)
-        .await
-    {
-        Ok(hand) => hand,
-        Err(e) => {
-            return Err(format!("Failed to fetch player hand: {e}"));
-        }
-    };
-
-    let has_card = player_hand.iter().any(|h| h.card == card);
-    if !has_card {
-        return Err("You don't have that card in your hand".to_string());
-    }
-
-    // Get the current trick
-    let current_trick = match round_tricks::Entity::find()
-        .filter(round_tricks::Column::RoundId.eq(current_round.id))
-        .order_by_desc(round_tricks::Column::TrickNumber)
-        .one(txn)
-        .await
-    {
-        Ok(Some(trick)) => trick,
-        Ok(None) => {
-            return Err("No current trick found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current trick: {e}"));
-        }
-    };
-
-    // Check if this player has already played in this trick (idempotency check)
-    let existing_play = match trick_plays::Entity::find()
-        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
-        .filter(trick_plays::Column::PlayerId.eq(current_player.id))
-        .one(txn)
-        .await
-    {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
-        Err(e) => {
-            return Err(format!("Failed to check existing play: {e}"));
-        }
-    };
-
-    if existing_play {
-        return Err("You have already played a card in this trick".to_string());
-    }
-
-    // Check if this is the first play in the trick (to determine lead suit)
-    let trick_plays = match trick_plays::Entity::find()
-        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
-        .all(txn)
-        .await
-    {
-        Ok(plays) => plays,
-        Err(e) => {
-            return Err(format!("Failed to fetch trick plays: {e}"));
-        }
-    };
-
-    let is_first_play = trick_plays.is_empty();
-    if !is_first_play {
-        // Enforce follow-suit rule if not the first play
-        let lead_suit = if let Some(first_play) = trick_plays.first() {
-            if first_play.card.len() >= 2 {
-                &first_play.card[1..2]
-            } else {
-                return Err("Invalid first card format".to_string());
-            }
-        } else {
-            return Err("No first play found".to_string());
-        };
-
-        let card_suit = if card.len() >= 2 {
-            &card[1..2]
-        } else {
-            return Err("Invalid card format".to_string());
-        };
-
-        if card_suit != lead_suit {
-            // Check if player has any cards of the lead suit
-            let has_lead_suit = player_hand.iter().any(|h| {
-                if h.card.len() >= 2 {
-                    &h.card[1..2] == lead_suit
-                } else {
-                    false
-                }
-            });
-
-            if has_lead_suit {
-                return Err("You must follow suit if possible".to_string());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Apply a card play to the current trick
-///
-/// This function records the card play and removes it from the player's hand.
-/// It does not handle turn progression or trick completion.
-pub(crate) async fn apply_play(
-    game_id: Uuid,
-    user_id: Uuid,
-    card: &str,
-    txn: &DatabaseTransaction,
-) -> Result<(), String> {
-    // Lock the current round row for update
-    let current_round = match game_rounds::Entity::find()
-        .filter(game_rounds::Column::GameId.eq(game_id))
-        .order_by_desc(game_rounds::Column::RoundNumber)
-        .lock(sea_orm::sea_query::LockType::Update)
-        .one(txn)
-        .await
-    {
-        Ok(Some(round)) => round,
-        Ok(None) => {
-            return Err("No current round found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current round: {e}"));
-        }
-    };
-
-    // Fetch the current player's game_player record
-    let current_player = match game_players::Entity::find()
-        .filter(game_players::Column::GameId.eq(game_id))
-        .filter(game_players::Column::UserId.eq(user_id))
-        .one(txn)
-        .await
-    {
-        Ok(Some(player)) => player,
-        Ok(None) => {
-            return Err("You are not a participant in this game".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch player data: {e}"));
-        }
-    };
-
-    // Get or create the current trick
-    let current_trick = match round_tricks::Entity::find()
-        .filter(round_tricks::Column::RoundId.eq(current_round.id))
-        .order_by_desc(round_tricks::Column::TrickNumber)
-        .one(txn)
-        .await
-    {
-        Ok(Some(trick)) => trick,
-        Ok(None) => {
-            // Create a new trick if none exists
-            let trick_id = Uuid::new_v4();
-            let new_trick = round_tricks::ActiveModel {
-                id: Set(trick_id),
-                round_id: Set(current_round.id),
-                trick_number: Set(1),
-                winner_player_id: Set(None),
-                created_at: Set(chrono::Utc::now().into()),
-            };
-
-            match new_trick.insert(txn).await {
-                Ok(trick) => trick,
-                Err(e) => {
-                    return Err(format!("Failed to create new trick: {e}"));
-                }
-            }
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current trick: {e}"));
-        }
-    };
-
-    // Get existing trick plays to determine play order
-    let trick_plays = match trick_plays::Entity::find()
-        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
-        .all(txn)
-        .await
-    {
-        Ok(plays) => plays,
-        Err(e) => {
-            return Err(format!("Failed to fetch trick plays: {e}"));
-        }
-    };
-
-    // Record the card play
-    let play_id = Uuid::new_v4();
-    let play_order = trick_plays.len() as i32;
-    let trick_play = trick_plays::ActiveModel {
-        id: Set(play_id),
-        trick_id: Set(current_trick.id),
-        player_id: Set(current_player.id),
-        card: Set(card.to_string()),
-        play_order: Set(play_order),
-    };
-
-    match trick_play.insert(txn).await {
-        Ok(_) => (),
-        Err(e) => {
-            return Err(format!("Failed to record card play: {e}"));
-        }
-    }
-
-    // Remove the card from the player's hand
-    let card_to_remove = match round_hands::Entity::find()
-        .filter(round_hands::Column::RoundId.eq(current_round.id))
-        .filter(round_hands::Column::PlayerId.eq(current_player.id))
-        .filter(round_hands::Column::Card.eq(card))
-        .one(txn)
-        .await
-    {
-        Ok(Some(hand_card)) => hand_card,
-        Ok(None) => {
-            return Err("Card not found in hand".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to find card in hand: {e}"));
-        }
-    };
-
-    match round_hands::Entity::delete_by_id(card_to_remove.id)
-        .exec(txn)
-        .await
-    {
-        Ok(_) => (),
-        Err(e) => {
-            return Err(format!("Failed to remove card from hand: {e}"));
-        }
-    }
-
-    Ok(())
-}
-
-/// Check if a trick is complete and handle progression
-///
-/// This function checks if all players have played in the current trick
-/// and handles either starting the next trick or completing the round.
-pub(crate) async fn maybe_advance_after_play(
-    game_id: Uuid,
-    txn: &DatabaseTransaction,
-) -> Result<(), String> {
-    // Lock the game row for update
-    let game = match games::Entity::find_by_id(game_id)
-        .lock(sea_orm::sea_query::LockType::Update)
-        .one(txn)
-        .await
-    {
-        Ok(Some(game)) => game,
-        Ok(None) => {
-            return Err("Game not found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch game: {e}"));
-        }
-    };
-
-    // Lock the current round row for update
-    let current_round = match game_rounds::Entity::find()
-        .filter(game_rounds::Column::GameId.eq(game_id))
-        .order_by_desc(game_rounds::Column::RoundNumber)
-        .lock(sea_orm::sea_query::LockType::Update)
-        .one(txn)
-        .await
-    {
-        Ok(Some(round)) => round,
-        Ok(None) => {
-            return Err("No current round found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current round: {e}"));
-        }
-    };
-
-    // Get the current trick
-    let current_trick = match round_tricks::Entity::find()
-        .filter(round_tricks::Column::RoundId.eq(current_round.id))
-        .order_by_desc(round_tricks::Column::TrickNumber)
-        .one(txn)
-        .await
-    {
-        Ok(Some(trick)) => trick,
-        Ok(None) => {
-            return Err("No current trick found".to_string());
-        }
-        Err(e) => {
-            return Err(format!("Failed to fetch current trick: {e}"));
-        }
-    };
-
-    // Get all players in the game
-    let all_players = match game_players::Entity::find()
-        .filter(game_players::Column::GameId.eq(game_id))
-        .all(txn)
-        .await
-    {
-        Ok(players) => players,
-        Err(e) => {
-            return Err(format!("Failed to fetch all players: {e}"));
-        }
-    };
-
-    // Get current trick plays
-    let trick_plays = match trick_plays::Entity::find()
-        .filter(trick_plays::Column::TrickId.eq(current_trick.id))
-        .all(txn)
-        .await
-    {
-        Ok(plays) => plays,
-        Err(e) => {
-            return Err(format!("Failed to fetch trick plays: {e}"));
-        }
-    };
-
-    let all_played = trick_plays.len() == all_players.len();
-
-    if all_played {
-        // Determine the winner of the trick
-        let mut winning_player_id = None;
-        let mut highest_value = -1;
-
-        for play in &trick_plays {
-            let card_value = get_card_rank_value(&play.card[0..1]);
-            if card_value > highest_value {
-                highest_value = card_value;
-                winning_player_id = Some(play.player_id);
-            }
-        }
-
-        // Update the trick with the winner
-        let trick_update = round_tricks::ActiveModel {
-            id: Set(current_trick.id),
-            round_id: Set(current_trick.round_id),
-            trick_number: Set(current_trick.trick_number),
-            winner_player_id: Set(winning_player_id),
-            created_at: Set(current_trick.created_at),
-        };
-
-        match trick_update.update(txn).await {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(format!("Failed to update trick winner: {e}"));
-            }
-        }
-
-        // Check if this was the last trick of the round
-        let cards_per_player = current_round.cards_dealt;
-        let total_tricks = cards_per_player;
-        let current_trick_number = current_trick.trick_number;
-
-        if current_trick_number == total_tricks {
-            // Round is complete, transition to scoring phase using state module
-            if let Err(e) =
-                crate::game_management::state::advance_phase(&game, games::GamePhase::Scoring, txn)
-                    .await
-            {
-                return Err(format!("Failed to transition to scoring phase: {e}"));
-            }
-            if let Err(e) = crate::game_management::state::set_next_player(&game, 0, txn).await {
-                return Err(format!("Failed to set next player: {e}"));
-            }
-        } else {
-            // Move to next player's turn (the winner of the trick) using state module
-            let next_turn = match game_players::Entity::find()
-                .filter(game_players::Column::GameId.eq(game_id))
-                .filter(game_players::Column::Id.eq(winning_player_id.unwrap()))
-                .one(txn)
-                .await
-            {
-                Ok(Some(player)) => player.turn_order.unwrap_or(0),
-                Ok(None) => 0,
-                Err(_) => 0,
-            };
-
-            if let Err(e) =
-                crate::game_management::state::set_next_player(&game, next_turn, txn).await
-            {
-                return Err(format!("Failed to update turn: {e}"));
-            }
-        }
-    } else {
-        // Move to next player's turn using state module
-        let current_turn = game.current_turn.unwrap_or(0);
-        let next_turn = (current_turn + 1) % all_players.len() as i32;
-
-        if let Err(e) = crate::game_management::state::set_next_player(&game, next_turn, txn).await
-        {
-            return Err(format!("Failed to update turn: {e}"));
-        }
-    }
-
-    Ok(())
-}
-
-/// Play a card and handle all trick logic
-///
-/// This is the main entry point for playing a card. It validates the play,
-/// applies it, and handles trick progression.
-pub(crate) async fn play_card(
-    game_id: Uuid,
-    user_id: Uuid,
-    card: &str,
-    txn: &DatabaseTransaction,
-) -> Result<(), String> {
-    // Validate the play
-    validate_play(game_id, user_id, card, txn).await?;
-
-    // Apply the play
-    apply_play(game_id, user_id, card, txn).await?;
-
-    // Handle progression
-    maybe_advance_after_play(game_id, txn).await?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -752,16 +411,94 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_follow_suit_rule() {
-        let hand = vec!["AS".to_string(), "KH".to_string(), "2C".to_string()];
+    fn test_advance_trick_logic_trick_not_complete() {
+        let plays = vec![
+            ("7H".to_string(), uuid::Uuid::new_v4()),
+            ("KH".to_string(), uuid::Uuid::new_v4()),
+        ];
 
-        // Playing lead suit is always valid
-        assert!(validate_follow_suit_rule("AS", "S", &hand));
+        let advancement = advance_trick_logic(
+            &plays, 4,     // 4 players
+            1,     // Current turn (player 2)
+            1,     // Trick 1
+            13,    // 13 cards per player
+            &None, // No trump
+        );
 
-        // Playing different suit when no lead suit cards available is valid
-        assert!(validate_follow_suit_rule("2C", "D", &hand));
+        assert!(!advancement.trick_complete);
+        assert_eq!(advancement.next_turn, 2); // Next player's turn
+        assert!(!advancement.round_complete);
+    }
 
-        // Playing different suit when lead suit cards available is invalid
-        assert!(!validate_follow_suit_rule("2C", "S", &hand));
+    #[test]
+    fn test_advance_trick_logic_trick_complete_not_round_end() {
+        let plays = vec![
+            ("7H".to_string(), uuid::Uuid::new_v4()),
+            ("KH".to_string(), uuid::Uuid::new_v4()),
+            ("2H".to_string(), uuid::Uuid::new_v4()),
+            ("9H".to_string(), uuid::Uuid::new_v4()),
+        ];
+
+        let advancement = advance_trick_logic(
+            &plays, 4,     // 4 players
+            1,     // Current turn (player 2)
+            1,     // Trick 1
+            13,    // 13 cards per player
+            &None, // No trump
+        );
+
+        assert!(advancement.trick_complete);
+        assert!(!advancement.round_complete);
+        assert_eq!(advancement.next_turn, -1); // Caller needs to map winner to turn
+    }
+
+    #[test]
+    fn test_advance_trick_logic_round_complete() {
+        let plays = vec![
+            ("7H".to_string(), uuid::Uuid::new_v4()),
+            ("KH".to_string(), uuid::Uuid::new_v4()),
+            ("2H".to_string(), uuid::Uuid::new_v4()),
+            ("9H".to_string(), uuid::Uuid::new_v4()),
+        ];
+
+        let advancement = advance_trick_logic(
+            &plays, 4,     // 4 players
+            1,     // Current turn (player 2)
+            13,    // Trick 13 (last trick of round)
+            13,    // 13 cards per player
+            &None, // No trump
+        );
+
+        assert!(advancement.trick_complete);
+        assert!(advancement.round_complete);
+        assert_eq!(advancement.next_turn, 0); // Reset to first player
+    }
+
+    #[test]
+    fn test_advance_trick_logic_with_trump() {
+        let player1 = uuid::Uuid::new_v4();
+        let player2 = uuid::Uuid::new_v4();
+        let player3 = uuid::Uuid::new_v4();
+        let player4 = uuid::Uuid::new_v4();
+
+        let plays = vec![
+            ("AH".to_string(), player1), // Ace of hearts
+            ("2S".to_string(), player2), // 2 of spades (trump)
+            ("7H".to_string(), player3), // 7 of hearts
+            ("KS".to_string(), player4), // King of spades (trump)
+        ];
+
+        let advancement = advance_trick_logic(
+            &plays,
+            4,                      // 4 players
+            1,                      // Current turn (player 2)
+            1,                      // Trick 1
+            13,                     // 13 cards per player
+            &Some("S".to_string()), // Spades is trump
+        );
+
+        assert!(advancement.trick_complete);
+        assert_eq!(advancement.winner_user_id, Some(player4)); // King of spades should win (highest trump)
+        assert!(!advancement.round_complete);
     }
 }

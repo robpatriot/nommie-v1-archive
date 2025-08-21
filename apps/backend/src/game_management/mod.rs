@@ -3,6 +3,7 @@
 //! HTTP handlers are defined in `routes::game` and wired via configure_routes.
 
 pub mod bidding;
+pub mod orchestration;
 pub mod rules;
 pub mod scoring;
 pub mod state;
@@ -36,8 +37,8 @@ pub(crate) async fn play_card_transaction(
         return Err("Invalid card format. Use format like '5S', 'AH', 'KD'".to_string());
     }
 
-    // Delegate to the tricks module for all trick logic
-    crate::game_management::tricks::play_card(game_id, user_id, &card, txn).await
+    // Delegate to the orchestration module for all trick logic
+    crate::game_management::orchestration::play_card(game_id, user_id, &card, txn).await
 }
 
 #[cfg(test)]
