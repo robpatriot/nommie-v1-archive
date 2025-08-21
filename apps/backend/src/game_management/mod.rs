@@ -14,6 +14,7 @@ use crate::game_management::rules::{
     calculate_cards_dealt, get_card_rank_value, is_trump_suit, is_valid_card_format,
     MAX_CARDS_PER_ROUND, PLAYER_COUNT, TOTAL_ROUNDS,
 };
+use crate::game_management::scoring::{calculate_round_points, has_exact_bid_bonus};
 
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result as ActixResult};
 use chrono::{DateTime, FixedOffset, Utc};
@@ -1356,7 +1357,7 @@ pub async fn get_game_state(
                     .unwrap_or(0);
 
                 // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
-                let points = score.tricks_won + if score.tricks_won == bid { 10 } else { 0 };
+                let points = calculate_round_points(score.tricks_won, bid);
 
                 round_score_snapshots.push(RoundScoreSnapshot {
                     player_id: score.player_id,
@@ -2286,12 +2287,7 @@ async fn calculate_player_total_score(
         };
 
         // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
-        let points = round_scores.tricks_won
-            + if round_scores.tricks_won == bid {
-                10
-            } else {
-                0
-            };
+        let points = calculate_round_points(round_scores.tricks_won, bid);
         total_score += points;
     }
 
@@ -2479,46 +2475,6 @@ mod tests {
         // 3 of diamonds (trump) should win over 2 of diamonds (trump) and 7 of hearts (lead suit)
         assert_eq!(winning_play.0, "3D");
         assert_eq!(highest_rank, 3);
-    }
-
-    // Test 3: Scoring bonuses
-    #[test]
-    fn test_scoring_exact_bid_bonus() {
-        // Test that exact bid gives +10 bonus
-        let tricks_won = 5;
-        let bid = 5;
-
-        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
-        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
-
-        // Should get 5 + 10 = 15 points for exact bid
-        assert_eq!(points, 15);
-    }
-
-    #[test]
-    fn test_scoring_no_bonus_for_inexact_bid() {
-        // Test that no bonus is given for inexact bid
-        let tricks_won = 3;
-        let bid = 5;
-
-        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
-        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
-
-        // Should get only 3 points (no bonus)
-        assert_eq!(points, 3);
-    }
-
-    #[test]
-    fn test_scoring_zero_bid_exact() {
-        // Test edge case: zero bid with zero tricks
-        let tricks_won = 0;
-        let bid = 0;
-
-        // Calculate points: 1 point per trick + 10 point bonus if bid matches tricks won
-        let points = tricks_won + if tricks_won == bid { 10 } else { 0 };
-
-        // Should get 0 + 10 = 10 points for exact zero bid
-        assert_eq!(points, 10);
     }
 
     // Helper function to test card rank calculation
@@ -2774,8 +2730,8 @@ pub async fn get_game_summary(
                 .map(|s| s.tricks_won)
                 .unwrap_or(0);
 
-            let bonus = bid == score && bid > 0;
-            let points = score + if bonus { 10 } else { 0 };
+            let bonus = has_exact_bid_bonus(score, bid) && bid > 0;
+            let points = calculate_round_points(score, bid);
 
             player_results.push(PlayerRoundResult {
                 player_id: player.id,
@@ -2825,7 +2781,7 @@ pub async fn get_game_summary(
                     .find(|b| b.player_id == score.player_id)
                     .map(|b| b.bid)
                     .unwrap_or(0);
-                let points = score.tricks_won + if score.tricks_won == bid { 10 } else { 0 };
+                let points = calculate_round_points(score.tricks_won, bid);
 
                 RoundScoreSummary {
                     player_id: score.player_id,
