@@ -69,8 +69,10 @@ TEST_DATABASE_URL="postgres://${APP_DB_USER}:${APP_DB_PASSWORD}@${POSTGRES_HOST}
 # =========== Logs ===========
 LOG_DIR="${LOG_DIR:-logs}"
 mkdir -p "$LOG_DIR"
+ALL_LOG="$LOG_DIR/all.log"
 UNIT_LOG="$LOG_DIR/unit.log"
 INT_LOG="$LOG_DIR/integration.log"
+: > "$ALL_LOG"
 : > "$UNIT_LOG"
 : > "$INT_LOG"
 echo "🗂️  Writing logs to $LOG_DIR"
@@ -164,9 +166,8 @@ fi
 export DATABASE_URL="${DATABASE_URL:-$TEST_DATABASE_URL}"
 echo "🔒 Using DATABASE_URL=${DATABASE_URL}"
 
-# =========== Test runners ===========
-UNIT_FAIL=0
-INT_FAIL=0
+# =========== Test runner ===========
+TEST_FAIL=0
 
 run_with_logs() {
   # $1 label, $2 log_file, $3... command
@@ -180,34 +181,47 @@ run_with_logs() {
   fi
 }
 
-# Unit
-run_with_logs "backend unit tests" "$UNIT_LOG" \
-  cargo test $CARGO_FLAGS --manifest-path apps/backend/Cargo.toml --lib $TEST_FLAGS || UNIT_FAIL=1
+# Single run: all targets (unit + integration + doctests) to avoid duplication
+run_with_logs "backend tests" "$ALL_LOG" \
+  cargo test $CARGO_FLAGS --manifest-path apps/backend/Cargo.toml --all-targets --all-features $TEST_FLAGS || TEST_FAIL=1
 
-# Integration
-run_with_logs "backend integration tests" "$INT_LOG" \
-  cargo test $CARGO_FLAGS --manifest-path apps/backend/Cargo.toml --tests $TEST_FLAGS || INT_FAIL=1
+# Split reporting: derive unit vs integration summaries from ALL_LOG
+RESULTS_MARKERS="$LOG_DIR/_results.markers"
+awk '
+  /^\s*Running unittests src\/lib\.rs/ {ctx="unit"; next}
+  /^\s*Running tests\//                {ctx="int";  next}
+  /^test result: /                    {print ctx "|" $0}
+' "$ALL_LOG" > "$RESULTS_MARKERS" || true
 
-# =========== Summary banner ===========
-# Pull final "test result:" lines
-unit_line=$(grep -E "test result: " "$UNIT_LOG" | tail -n1 || true)
-int_line=$(grep -E "test result: " "$INT_LOG" | tail -n1 || true)
+# Context-specific logs (optional; aids debugging)
+awk 'BEGIN{p=0} /^\s*Running unittests src\/lib\.rs/{p=1} /^\s*Running / && !/unittests src\/lib\.rs/{if(p){exit}} {if(p)print}' "$ALL_LOG" > "$UNIT_LOG" || true
+awk 'BEGIN{p=0} /^\s*Running tests\//{p=1} {if(p)print}' "$ALL_LOG" > "$INT_LOG" || true
 
-parse_counts() {
-  local line="$1"
-  local passed failed time
-  passed=$(echo "$line" | grep -oE '[0-9]+ passed' | awk '{print $1}')
-  failed=$(echo "$line" | grep -oE '[0-9]+ failed' | awk '{print $1}')
-  time=$(echo "$line" | grep -oE 'finished in [0-9.]+s' | sed 's/finished in //')
-  echo "${passed:-0} ${failed:-0} ${time:-n/a}"
+# ---- Robust parsing (do not fail script if parsing finds no matches) ----
+set +e
+sum_counts() {
+  local ctx="$1" line n passed failed ignored measured filtered
+  passed=0; failed=0; ignored=0; measured=0; filtered=0
+  while IFS= read -r line; do
+    [[ "$line" != "$ctx|"* ]] && continue
+    n=$(echo "$line" | grep -oE '[0-9]+ passed'    | awk '{s+=$1} END{print s+0}'); (( passed   += n ))
+    n=$(echo "$line" | grep -oE '[0-9]+ failed'    | awk '{s+=$1} END{print s+0}'); (( failed   += n ))
+    n=$(echo "$line" | grep -oE '[0-9]+ ignored'   | awk '{s+=$1} END{print s+0}'); (( ignored  += n ))
+    n=$(echo "$line" | grep -oE '[0-9]+ measured'  | awk '{s+=$1} END{print s+0}'); (( measured += n ))
+    n=$(echo "$line" | grep -oE '[0-9]+ filtered'  | awk '{s+=$1} END{print s+0}'); (( filtered += n ))
+  done < "$RESULTS_MARKERS"
+  echo "$passed $failed $ignored $measured $filtered"
 }
-
-read unit_pass unit_fail_cnt unit_time < <(parse_counts "$unit_line")
-read int_pass int_fail_cnt int_time   < <(parse_counts "$int_line")
+read unit_pass unit_fail_cnt unit_ign unit_meas unit_filt < <(sum_counts "unit")
+read int_pass  int_fail_cnt  int_ign  int_meas  int_filt  < <(sum_counts "int")
+unit_pass=${unit_pass:-0}; unit_fail_cnt=${unit_fail_cnt:-0}
+int_pass=${int_pass:-0};   int_fail_cnt=${int_fail_cnt:-0}
+set -e
+# ------------------------------------------------------------------------
 
 db_status="Migrations: up-to-date" # your tests enforce this at runtime
 overall="OK"
-if [[ "$UNIT_FAIL" -ne 0 || "$INT_FAIL" -ne 0 || "$unit_fail_cnt" -ne 0 || "$int_fail_cnt" -ne 0 ]]; then
+if [[ "$TEST_FAIL" -ne 0 || "$unit_fail_cnt" -ne 0 || "$int_fail_cnt" -ne 0 ]]; then
   overall="FAIL"
 fi
 
@@ -218,14 +232,12 @@ if [[ "$overall" == "OK" ]]; then
 else
   echo "${BOLD}${RED}❌ TEST SUMMARY${RESET}"
 fi
-printf "Unit:        %s%d passed%s, %s%d failed%s (%s)\n" \
+printf "Unit:        %s%d passed%s, %s%d failed%s\n" \
   "$([[ ${unit_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${unit_pass:-0}" "$RESET" \
-  "$([[ ${unit_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${unit_fail_cnt:-0}" "$RESET" \
-  "${unit_time:-n/a}"
-printf "Integration: %s%d passed%s, %s%d failed%s (%s)\n" \
+  "$([[ ${unit_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${unit_fail_cnt:-0}" "$RESET"
+printf "Integration: %s%d passed%s, %s%d failed%s\n" \
   "$([[ ${int_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${int_pass:-0}" "$RESET" \
-  "$([[ ${int_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${int_fail_cnt:-0}" "$RESET" \
-  "${int_time:-n/a}"
+  "$([[ ${int_fail_cnt:-0} -eq 0 ]] && echo "$GREEN" || echo "$RED")" "${int_fail_cnt:-0}" "$RESET"
 echo "DB: ${TEST_DB_NAME} • ${db_status}"
 echo -n "Logs: "
 print_link "$UNIT_LOG" "$UNIT_LOG"; printf "  "
@@ -238,6 +250,11 @@ else
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Exit non-zero on any failure (good for CI)
-[[ "$overall" == "OK" ]] || exit 1
-
+# Determine final exit status and handle logs safely
+status=0
+[[ "$overall" == "OK" ]] || status=1
+trap '' EXIT
+if [[ $status -ne 0 ]]; then
+  show_pg_logs_on_fail
+fi
+exit $status
