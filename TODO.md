@@ -45,7 +45,8 @@
   - Add concise module-level doc comment mapping submodules.
   - Add `// TODO(next milestone):` stubs for round advancement + AI orchestration.
 - **Verification:** `pnpm run backend:clippy` and `pnpm run test:int` clean.
-- **Acceptance:** code compiles, tests green, minimal API at `mod.rs`.
+- **Acceptance:** code compiles, tests green, minimal API at `mod.rs`.  
+  Round advancement + AI orchestration are **explicitly out of scope** (moved to Milestone K).
 
 ## Milestone H: Async lock cleanup (deferred until after refactor)
 - Replace inappropriate `tokio::sync::Mutex` in sync contexts; prefer `std::sync::Mutex` or refactor to async.
@@ -54,7 +55,6 @@
 
 ## Milestone I: Known issues / deferred tasks
 - ⚠️ Investigate `pnpm run test:int` error → capture logs, classify infra vs. logic.
-- ⚠️ Reintroduce round advancement + AI orchestration post-refactor.
 - ⚠️ Verify test harness teardown/DB cleanup is reliable (avoid DB state leakage across tests).
 - ⚠️ Add coverage for error paths (invalid bids, invalid trick plays).
 - ⚠️ Combine schema creation logic (currently duplicated in `docker/postgres/init.sh` and `scripts/test-int.sh`) into a shared script so both use the same code path.
@@ -67,3 +67,18 @@
 - Coverage signal (lightweight) — backend llvm-cov vs tarpaulin (to discuss); frontend Vitest coverage.
 - Mutation testing pilot — `cargo-mutants` on tricks + scoring.
 - Performance sanity benches — Criterion benches for trick winner + scoring.
+
+## Milestone K: Round advancement + AI orchestration
+- Reintroduce round progression logic after refactor.
+- Reintroduce AI player orchestration (bidding + trick play).
+- **Acceptance:** integration test covers full game loop (deal → bid → trump → tricks → scoring → round advance).
+
+## Milestone L: Auth & request validation via Actix extractors
+- **Investigate viability:** Can custom extractors (e.g., for JWT → `AuthedUser`, membership → `GameContext`) centralize checks like “is logged in,” “has valid token,” “is in this game,” etc.?
+- **Design extractors:** 
+  - `AuthExtractor` → validates JWT, loads user, attaches `UserId`.
+  - `GameExtractor` → validates game ID, ensures user is a participant, attaches `GameId` + role.
+  - Consistent error mapping to HTTP statuses (401/403/404) and error body shape.
+- **Refactor handlers:** Replace ad-hoc checks across `game_management` submodules with typed inputs from extractors; keep business logic pure.
+- **Testing:** Unit tests for extractors (happy + failure paths), integration tests for endpoints using them.
+- **Acceptance:** Handlers no longer duplicate auth/membership checks; responsibilities move to extractors; tests and clippy green.
