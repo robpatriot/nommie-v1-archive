@@ -379,6 +379,7 @@ pub(crate) async fn resolve_highest_bidder(
 ///
 /// This function handles AI player bidding, including validation and
 /// potentially transitioning the game phase.
+#[allow(dead_code)]
 pub(crate) async fn perform_ai_bid(
     game_id: Uuid,
     player_id: Uuid,
@@ -514,44 +515,24 @@ pub(crate) async fn perform_ai_bid(
     let all_bids_submitted = all_bids_submitted(round_bids.len(), all_players.len());
 
     if all_bids_submitted {
-        // Transition the game to TrumpSelection phase
-        let game_update = games::ActiveModel {
-            id: Set(game.id),
-            state: Set(game.state),
-            phase: Set(games::GamePhase::TrumpSelection),
-            current_turn: Set(Some(0)), // Reset turn for trump selection
-            created_at: Set(game.created_at),
-            updated_at: Set(Utc::now().into()),
-            started_at: Set(game.started_at),
-            completed_at: Set(game.completed_at),
-        };
-
-        match game_update.update(db).await {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(format!("Failed to transition game phase: {e}"));
-            }
+        // Transition the game to TrumpSelection phase using state module
+        if let Err(e) = crate::game_management::state::advance_phase(
+            &game,
+            games::GamePhase::TrumpSelection,
+            db,
+        )
+        .await
+        {
+            return Err(format!("Failed to transition game phase: {e}"));
+        }
+        if let Err(e) = crate::game_management::state::set_next_player(&game, 0, db).await {
+            return Err(format!("Failed to set next player: {e}"));
         }
     } else {
-        // Move to next player's turn
+        // Move to next player's turn using state module
         let next_turn = get_next_bidding_turn(current_turn);
-
-        let game_update = games::ActiveModel {
-            id: Set(game.id),
-            state: Set(game.state),
-            phase: Set(game.phase),
-            current_turn: Set(Some(next_turn)),
-            created_at: Set(game.created_at),
-            updated_at: Set(Utc::now().into()),
-            started_at: Set(game.started_at),
-            completed_at: Set(game.completed_at),
-        };
-
-        match game_update.update(db).await {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(format!("Failed to update turn: {e}"));
-            }
+        if let Err(e) = crate::game_management::state::set_next_player(&game, next_turn, db).await {
+            return Err(format!("Failed to update turn: {e}"));
         }
     }
 
@@ -561,6 +542,7 @@ pub(crate) async fn perform_ai_bid(
 /// Perform AI trump selection action
 ///
 /// This function handles AI player trump selection after winning the bidding.
+#[allow(dead_code)]
 pub(crate) async fn perform_ai_trump_selection(
     game_id: Uuid,
     player_id: Uuid,
@@ -790,23 +772,14 @@ pub(crate) async fn submit_trump_transaction(
         }
     }
 
-    // Transition the game to Playing phase
-    let game_update = games::ActiveModel {
-        id: Set(game.id),
-        state: Set(game.state),
-        phase: Set(games::GamePhase::Playing),
-        current_turn: Set(Some(0)), // Reset turn for playing
-        created_at: Set(game.created_at),
-        updated_at: Set(Utc::now().into()),
-        started_at: Set(game.started_at),
-        completed_at: Set(game.completed_at),
-    };
-
-    match game_update.update(txn).await {
-        Ok(_) => (),
-        Err(e) => {
-            return Err(format!("Failed to transition game phase: {e}"));
-        }
+    // Transition the game to Playing phase using state module
+    if let Err(e) =
+        crate::game_management::state::advance_phase(&game, games::GamePhase::Playing, txn).await
+    {
+        return Err(format!("Failed to transition game phase: {e}"));
+    }
+    if let Err(e) = crate::game_management::state::set_next_player(&game, 0, txn).await {
+        return Err(format!("Failed to set next player: {e}"));
     }
 
     Ok(())

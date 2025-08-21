@@ -590,26 +590,18 @@ pub(crate) async fn maybe_advance_after_play(
         let current_trick_number = current_trick.trick_number;
 
         if current_trick_number == total_tricks {
-            // Round is complete, transition to scoring phase
-            let game_update = games::ActiveModel {
-                id: Set(game.id),
-                state: Set(game.state),
-                phase: Set(games::GamePhase::Scoring),
-                current_turn: Set(None),
-                created_at: Set(game.created_at),
-                updated_at: Set(chrono::Utc::now().into()),
-                started_at: Set(game.started_at),
-                completed_at: Set(game.completed_at),
-            };
-
-            match game_update.update(txn).await {
-                Ok(_) => (),
-                Err(e) => {
-                    return Err(format!("Failed to transition to scoring phase: {e}"));
-                }
+            // Round is complete, transition to scoring phase using state module
+            if let Err(e) =
+                crate::game_management::state::advance_phase(&game, games::GamePhase::Scoring, txn)
+                    .await
+            {
+                return Err(format!("Failed to transition to scoring phase: {e}"));
+            }
+            if let Err(e) = crate::game_management::state::set_next_player(&game, 0, txn).await {
+                return Err(format!("Failed to set next player: {e}"));
             }
         } else {
-            // Move to next player's turn (the winner of the trick)
+            // Move to next player's turn (the winner of the trick) using state module
             let next_turn = match game_players::Entity::find()
                 .filter(game_players::Column::GameId.eq(game_id))
                 .filter(game_players::Column::Id.eq(winning_player_id.unwrap()))
@@ -621,45 +613,20 @@ pub(crate) async fn maybe_advance_after_play(
                 Err(_) => 0,
             };
 
-            let game_update = games::ActiveModel {
-                id: Set(game.id),
-                state: Set(game.state),
-                phase: Set(game.phase),
-                current_turn: Set(Some(next_turn)),
-                created_at: Set(game.created_at),
-                updated_at: Set(chrono::Utc::now().into()),
-                started_at: Set(game.started_at),
-                completed_at: Set(game.completed_at),
-            };
-
-            match game_update.update(txn).await {
-                Ok(_) => (),
-                Err(e) => {
-                    return Err(format!("Failed to update turn: {e}"));
-                }
+            if let Err(e) =
+                crate::game_management::state::set_next_player(&game, next_turn, txn).await
+            {
+                return Err(format!("Failed to update turn: {e}"));
             }
         }
     } else {
-        // Move to next player's turn
+        // Move to next player's turn using state module
         let current_turn = game.current_turn.unwrap_or(0);
         let next_turn = (current_turn + 1) % all_players.len() as i32;
 
-        let game_update = games::ActiveModel {
-            id: Set(game.id),
-            state: Set(game.state),
-            phase: Set(game.phase),
-            current_turn: Set(Some(next_turn)),
-            created_at: Set(game.created_at),
-            updated_at: Set(chrono::Utc::now().into()),
-            started_at: Set(game.started_at),
-            completed_at: Set(game.completed_at),
-        };
-
-        match game_update.update(txn).await {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(format!("Failed to update turn: {e}"));
-            }
+        if let Err(e) = crate::game_management::state::set_next_player(&game, next_turn, txn).await
+        {
+            return Err(format!("Failed to update turn: {e}"));
         }
     }
 
