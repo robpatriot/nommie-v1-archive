@@ -9,11 +9,10 @@ pub mod state;
 pub mod tricks;
 
 // Re-export commonly used rules constants and functions
-pub use rules::{
-    calculate_cards_dealt, canonical_player_index, get_card_rank_value, get_dealer_index_for_round,
-    get_next_dealer_index, get_next_player_index, get_previous_player_index, is_trump_suit,
-    is_valid_card_format, turn_order_from_index, MAX_CARDS_PER_ROUND, MIN_CARDS_PER_ROUND,
-    PLAYER_COUNT, TOTAL_ROUNDS,
+
+use crate::game_management::rules::{
+    calculate_cards_dealt, get_card_rank_value, is_trump_suit, is_valid_card_format,
+    MAX_CARDS_PER_ROUND, PLAYER_COUNT, TOTAL_ROUNDS,
 };
 
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Result as ActixResult};
@@ -2301,7 +2300,7 @@ async fn calculate_player_total_score(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::game_management::rules::{get_card_rank_value, is_trump_suit};
 
     // Test 1: Bidding rules
     #[test]
