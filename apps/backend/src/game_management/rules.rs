@@ -242,6 +242,70 @@ pub fn get_round_card_counts() -> Vec<i32> {
     (1..=TOTAL_ROUNDS).map(calculate_cards_dealt).collect()
 }
 
+/// Check if a round is complete (all tricks have been played)
+///
+/// This function is PURE - it checks if the round has the expected number of tricks.
+/// Returns true if the round is complete.
+pub fn is_round_complete(tricks_played: i32, cards_dealt: i32) -> bool {
+    tricks_played >= cards_dealt
+}
+
+/// Get the next dealer for the next round
+///
+/// This function is PURE - it calculates the next dealer using modulo arithmetic.
+/// Returns the next dealer index (0-3) with wraparound.
+pub fn get_next_dealer_for_round(current_dealer: Option<usize>, player_count: usize) -> usize {
+    if let Some(dealer) = current_dealer {
+        (dealer + 1) % player_count
+    } else {
+        0 // Default to first player if no current dealer
+    }
+}
+
+/// Check if a game is complete (all 26 rounds played)
+///
+/// This function is PURE - it checks if the game has reached the maximum rounds.
+/// Returns true if the game is complete.
+pub fn is_game_complete(current_round: i32) -> bool {
+    current_round >= TOTAL_ROUNDS
+}
+
+/// Get the number of cards to deal for the next round
+///
+/// This function is PURE - it calculates the next round's card count.
+/// Returns the number of cards to deal, or None if the game is complete.
+pub fn get_next_round_cards(current_round: i32) -> Option<i32> {
+    if current_round >= TOTAL_ROUNDS {
+        None
+    } else {
+        Some(calculate_cards_dealt(current_round + 1))
+    }
+}
+
+/// Validate that a player's turn is valid
+///
+/// This function is PURE - it checks if a turn index is within valid bounds.
+/// Returns true if the turn is valid.
+pub fn is_valid_turn(turn: i32, player_count: usize) -> bool {
+    turn >= 0 && turn < player_count as i32
+}
+
+/// Get the player index from a turn order value
+///
+/// This function is PURE - it converts database turn_order to 0-based player index.
+/// Handles wraparound for any turn order value.
+pub fn player_index_from_turn_order(turn_order: i32, player_count: usize) -> usize {
+    ((turn_order % player_count as i32) + player_count as i32) as usize % player_count
+}
+
+/// Get the turn order value from a player index
+///
+/// This function is PURE - it converts 0-based player index to database turn_order.
+/// Returns the turn order value.
+pub fn turn_order_from_player_index(player_index: usize) -> i32 {
+    player_index as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +505,66 @@ mod tests {
         assert_eq!(get_previous_round_number(2), Some(1));
         assert_eq!(get_previous_round_number(26), Some(25));
         assert_eq!(get_previous_round_number(1), None);
+    }
+
+    #[test]
+    fn test_is_round_complete() {
+        assert!(is_round_complete(13, 13));
+        assert!(is_round_complete(14, 13)); // More tricks than cards
+        assert!(!is_round_complete(12, 13));
+        assert!(!is_round_complete(0, 13));
+    }
+
+    #[test]
+    fn test_get_next_dealer_for_round() {
+        assert_eq!(get_next_dealer_for_round(Some(0), 4), 1);
+        assert_eq!(get_next_dealer_for_round(Some(1), 4), 2);
+        assert_eq!(get_next_dealer_for_round(Some(2), 4), 3);
+        assert_eq!(get_next_dealer_for_round(Some(3), 4), 0); // Wraparound
+        assert_eq!(get_next_dealer_for_round(None, 4), 0); // Default
+    }
+
+    #[test]
+    fn test_is_game_complete() {
+        assert!(!is_game_complete(25));
+        assert!(is_game_complete(26));
+        assert!(is_game_complete(27));
+    }
+
+    #[test]
+    fn test_get_next_round_cards() {
+        assert_eq!(get_next_round_cards(1), Some(12)); // Round 2: 12 cards
+        assert_eq!(get_next_round_cards(11), Some(2)); // Round 12: 2 cards
+        assert_eq!(get_next_round_cards(15), Some(3)); // Round 16: 3 cards
+        assert_eq!(get_next_round_cards(26), None); // Game complete
+    }
+
+    #[test]
+    fn test_is_valid_turn() {
+        assert!(is_valid_turn(0, 4));
+        assert!(is_valid_turn(1, 4));
+        assert!(is_valid_turn(2, 4));
+        assert!(is_valid_turn(3, 4));
+        assert!(!is_valid_turn(-1, 4));
+        assert!(!is_valid_turn(4, 4));
+    }
+
+    #[test]
+    fn test_player_index_from_turn_order() {
+        assert_eq!(player_index_from_turn_order(0, 4), 0);
+        assert_eq!(player_index_from_turn_order(1, 4), 1);
+        assert_eq!(player_index_from_turn_order(2, 4), 2);
+        assert_eq!(player_index_from_turn_order(3, 4), 3);
+        assert_eq!(player_index_from_turn_order(4, 4), 0); // Wraparound
+        assert_eq!(player_index_from_turn_order(7, 4), 3); // Wraparound
+        assert_eq!(player_index_from_turn_order(-1, 4), 3); // Negative wraparound
+    }
+
+    #[test]
+    fn test_turn_order_from_player_index() {
+        assert_eq!(turn_order_from_player_index(0), 0);
+        assert_eq!(turn_order_from_player_index(1), 1);
+        assert_eq!(turn_order_from_player_index(2), 2);
+        assert_eq!(turn_order_from_player_index(3), 3);
     }
 }
