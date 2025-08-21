@@ -3,17 +3,18 @@ pub mod dto;
 pub mod entity;
 pub mod game_management;
 pub mod jwt;
+pub mod routes;
 pub mod user_management;
 
 pub use bootstrap::{connect_and_migrate_from_env, init_tracing, load_dotenv};
 
 use actix_web::web;
 
-use game_management::{
+use jwt::{get_claims, get_user, JwtAuth};
+use routes::game::{
     add_ai_player, create_game, delete_game, get_game_state, get_game_summary, get_games,
     join_game, mark_player_ready, play_card, submit_bid, submit_trump,
 };
-use jwt::{get_claims, get_user, JwtAuth};
 
 /// Configure all routes for the application
 pub fn configure_routes(cfg: &mut actix_web::web::ServiceConfig) {
