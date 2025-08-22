@@ -82,3 +82,36 @@
 - **Refactor handlers:** Replace ad-hoc checks across `game_management` submodules with typed inputs from extractors; keep business logic pure.
 - **Testing:** Unit tests for extractors (happy + failure paths), integration tests for endpoints using them.
 - **Acceptance:** Handlers no longer duplicate auth/membership checks; responsibilities move to extractors; tests and clippy green.
+
+## Milestone M: Tricks separation wrap-up
+- ✅ `tricks` is domain-only; DB façade moved to `game_management::orchestration`.
+- ✅ Tests & clippy green.
+
+### M1. Add targeted orchestration tests (small)
+- Add 1–2 focused unit/integration tests in `orchestration` for DB error paths:
+  - Double-play / invalid play within a txn
+  - Row-lock contention edge case (if we can simulate)
+- **Acceptance:** `pnpm run test:int` & `pnpm run backend:clippy` green.
+
+### M2. Document the pattern (small)
+- Add `docs/architecture/rules-vs-orchestration.md` describing:
+  - Domain module = pure logic + small domain types
+  - Orchestration module = all SeaORM/txn work
+  - Where transactions begin/end; error mapping rules
+- Link from CONTRIBUTING; **Acceptance:** doc present and referenced.
+
+## Milestone N: Separation sweep
+### N1. Audit other modules for split (analysis-only first)
+- Targets: `bidding`, `scoring`, `state` (phase/round advancement), and any AI helpers.
+- Produce per-module metrics (LOC, function count, pure vs DB, entry points).
+- **Acceptance:** a short Markdown report per module under `docs/analysis/`.
+
+### N2. Refactor per-module if coupling is concentrated
+- Extract pure logic (e.g., `apply_bid_logic`, `apply_score_update`, `advance_round_logic`) into domain module.
+- Move DB calls to `game_management::orchestration` (or a sibling `orchestration::<area>` if needed).
+- **Acceptance:** no behavior changes; tests/clippy green.
+
+### N3. Architecture consistency check
+- Ensure no SeaORM imports in domain modules.
+- Ensure orchestration owns transactions + row locking.
+- **Acceptance:** grep shows zero SeaORM refs in domain modules.
